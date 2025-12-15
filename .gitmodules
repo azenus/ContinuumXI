@@ -4,3 +4,6 @@
 [submodule "losmeshes"]
 	path = losmeshes
 	url = https://github.com/LandSandBoat/losmeshes.git
+[submodule "Modules/LQS"]
+	path = Modules/LQS
+	url = https://github.com/LoxleyX/LQS.git
