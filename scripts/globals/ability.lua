@@ -66,12 +66,12 @@ xi.ability.adjustDamage = function(dmg, attacker, skill, target, skilltype, skil
     if skilltype == xi.attackType.PHYSICAL then
         dmg = target:physicalDmgTaken(dmg, skillparam)
     elseif skilltype == xi.attackType.MAGICAL then
-        dmg = math.floor(dmg * xi.spells.damage.calculateDamageAdjustment(target, false, true, false, false))
+        dmg = math.floor(dmg * xi.combat.damage.calculateDamageAdjustment(target, false, true, false, false))
         dmg = math.floor(dmg * xi.spells.damage.calculateAbsorption(target, element, true))
         dmg = math.floor(dmg * xi.spells.damage.calculateNullification(target, element, true, false))
         dmg = math.floor(target:handleSevereDamage(dmg, false))
     elseif skilltype == xi.attackType.BREATH then
-        dmg = math.floor(dmg * xi.spells.damage.calculateDamageAdjustment(target, false, false, false, true))
+        dmg = math.floor(dmg * xi.combat.damage.calculateDamageAdjustment(target, false, false, false, true))
         dmg = math.floor(dmg * xi.spells.damage.calculateAbsorption(target, element, false))
         dmg = math.floor(dmg * xi.spells.damage.calculateNullification(target, element, false, true))
         dmg = math.floor(target:handleSevereDamage(dmg, false))
@@ -105,8 +105,6 @@ xi.ability.takeDamage = function(defender, attacker, params, primary, finaldmg, 
             -- TODO: ability absorb messages (if there are any)
             -- action:messageID(defender:getID(), xi.msg.basic.WHATEVER)
         end
-
-        action:recordDamage(defender, attackType, finaldmg)
     elseif shadowsAbsorbed > 0 then
         action:messageID(defender:getID(), xi.msg.basic.SHADOW_ABSORB)
         action:param(defender:getID(), shadowsAbsorbed)
@@ -116,6 +114,10 @@ xi.ability.takeDamage = function(defender, attacker, params, primary, finaldmg, 
 
     local targetTPMult = params.targetTPMult or 1
     finaldmg = defender:takeWeaponskillDamage(attacker, finaldmg, attackType, damageType, slot, primary, tpHitsLanded, (extraHitsLanded * 10) + bonusTP, targetTPMult)
+    if tpHitsLanded + extraHitsLanded > 0 then
+        action:recordDamage(defender, attackType, math.abs(finaldmg))
+    end
+
     local enmityEntity = taChar or attacker
     if params.overrideCE and params.overrideVE then
         defender:addEnmity(enmityEntity, params.overrideCE, params.overrideVE)

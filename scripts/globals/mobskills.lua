@@ -63,7 +63,7 @@ local burstMultipliersByTier =
 
 local function calculateMobMagicBurst(caster, ele, target)
     local burstMultiplier = 1.0
-    local skillchainTier, skillchainCount = xi.magicburst.formMagicBurst(ele, target)
+    local skillchainTier, skillchainCount = xi.magicburst.formMagicBurst(target, ele)
 
     if skillchainTier > 0 then
         burstMultiplier = burstMultipliersByTier[skillchainCount]
@@ -120,7 +120,7 @@ local function handleSinglePhysicalHit(mob, target, hitdamage, hitslanded, final
         params.canCrit or
         params.tpEffect == xi.mobskills.physicalTpBonus.CRIT_VARIES
     then
-        local critRate = xi.combat.physical.calculateSwingCriticalRate(mob, target, mob:getTP(), nil)
+        local critRate = xi.combat.physical.calculateSwingCriticalRate(mob, target, mob:getTP(), xi.slot.MAIN)
         isCritical = math.random(1, 1000) <= critRate * 1000
     end
 
@@ -298,7 +298,7 @@ xi.mobskills.mobPhysicalMove = function(mob, target, skill, numHits, accMod, ftp
         skill:setMsg(xi.msg.basic.SKILL_MISS)
     -- calculate tp return of mob skill and add if hit primary target
     elseif skill:getPrimaryTargetID() == target:getID() then
-        local tpReturn = xi.combat.tp.getSingleMeleeHitTPReturn(mob, target)
+        local tpReturn = xi.combat.tp.getSingleMeleeHitTPReturn(mob, false)
         tpReturn = tpReturn + 10 * (hitslanded - 1) -- extra hits give 10 TP each
         mob:addTP(tpReturn)
     end
@@ -360,7 +360,7 @@ xi.mobskills.mobMagicalMove = function(actor, target, action, baseDamage, action
             petAccBonus = utils.clamp(master:getSkillLevel(xi.skill.SUMMONING_MAGIC) - master:getMaxSkillLevel(actor:getMainLvl(), xi.job.SMN, xi.skill.SUMMONING_MAGIC), 0, 200)
         end
 
-        local skillchainTier, _ = xi.magicburst.formMagicBurst(actionElement, target)
+        local skillchainTier, _ = xi.magicburst.formMagicBurst(target, actionElement)
         if
             actor:getPetID() > 0 and
             skillchainTier > 0
@@ -370,7 +370,7 @@ xi.mobskills.mobMagicalMove = function(actor, target, action, baseDamage, action
     end
 
     -- Multipliers.
-    local sdt            = xi.spells.damage.calculateSDT(target, actionElement)
+    local sdt            = xi.combat.damage.magicalElementSDT(target, actionElement)
     local resistRate     = xi.combat.magicHitRate.calculateResistRate(actor, target, 0, 0, 0, actionElement, xi.mod.INT, 0, petAccBonus)
     local dayAndWeather  = xi.spells.damage.calculateDayAndWeather(actor, actionElement, false)
     local magicBonusDiff = xi.spells.damage.calculateMagicBonusDiff(actor, target, 0, 0, actionElement)
@@ -385,7 +385,7 @@ xi.mobskills.mobMagicalMove = function(actor, target, action, baseDamage, action
     -- magical mob skills are single hit so provide single Melee hit TP return if primary target
     -- TODO: This should probably be moved to AFTER all damage is calculated, since this is not the final step.
     if finalDamage > 0 and action:getPrimaryTargetID() == target:getID() then
-        local tpReturn = xi.combat.tp.getSingleMeleeHitTPReturn(actor, target)
+        local tpReturn = xi.combat.tp.getSingleMeleeHitTPReturn(actor, false)
         actor:addTP(tpReturn)
     end
 
@@ -440,7 +440,7 @@ xi.mobskills.mobBreathMove = function(mob, target, skill, skillParams)
     mAccuracyBonus = xi.combat.physical.calculateTPfactor(skill:getTP(), mAccuracyBonusfTP)
 
     local systemBonus     = 1 + utils.getEcosystemStrengthBonus(mob:getEcosystem(), target:getEcosystem()) / 4
-    local elementalSDT    = xi.spells.damage.calculateSDT(target, actionElement)
+    local elementalSDT    = xi.combat.damage.magicalElementSDT(target, actionElement)
     local resistRate      = xi.combat.magicHitRate.calculateResistRate(mob, target, 0, 0, xi.skillRank.A_PLUS, actionElement, resistStat, 0, mAccuracyBonus)
     local dayAndWeather   = xi.spells.damage.calculateDayAndWeather(mob, actionElement, false)
     local absorb          = xi.spells.damage.calculateAbsorption(target, actionElement, true)
@@ -530,13 +530,14 @@ xi.mobskills.mobFinalAdjustments = function(damage, mob, skill, target, attackTy
         end
 
         -- Remove shadows
-        damage = utils.takeShadows(target, damage, shadowsToRemove)
+        local shadowsUsed = 0
+        damage, shadowsUsed = utils.takeShadows(target, damage, shadowsToRemove)
 
         -- Dealt zero damage, so shadows took all hits.
         if damage == 0 then
             skill:setMsg(xi.msg.basic.SHADOW_ABSORB)
 
-            return 0
+            return shadowsUsed
         end
 
     elseif shadowsToRemove == xi.mobskills.shadowBehavior.WIPE_SHADOWS then -- Remove all shadows
@@ -564,10 +565,11 @@ xi.mobskills.mobFinalAdjustments = function(damage, mob, skill, target, attackTy
     utils.handleAutomatonAutoAnalyzer(target, skill, damage)
 
     if attackType == xi.attackType.PHYSICAL then
+        damage = damage * xi.combat.damage.physicalElementSDT(target, damageType)
         damage = target:physicalDmgTaken(damage, damageType)
     elseif attackType == xi.attackType.MAGICAL then
         local element = utils.clamp(damageType - 5, xi.element.NONE, xi.element.DARK) -- Transform damage type to element
-        damage = math.floor(damage * xi.spells.damage.calculateDamageAdjustment(target, false, true, false, false))
+        damage = math.floor(damage * xi.combat.damage.calculateDamageAdjustment(target, false, true, false, false))
         damage = math.floor(damage * xi.spells.damage.calculateAbsorption(target, element, true))
         damage = math.floor(damage * xi.spells.damage.calculateNullification(target, element, true, false))
         damage = math.floor(target:handleSevereDamage(damage, false))
@@ -584,6 +586,7 @@ xi.mobskills.mobFinalAdjustments = function(damage, mob, skill, target, attackTy
         damage = math.floor(target:handleSevereDamage(damage, false))
         damage = math.floor(target:checkDamageCap(damage))
     elseif attackType == xi.attackType.RANGED then
+        damage = damage * xi.combat.damage.physicalElementSDT(target, damageType)
         damage = target:rangedDmgTaken(damage)
     end
 
@@ -620,8 +623,8 @@ xi.mobskills.calculateSkillTPReturn = function(damage, mob, skill, target, attac
         local targetTPReturn = 0
 
         if attackType == xi.attackType.BREATH then
-            mobTPReturn    = xi.combat.tp.getSingleMeleeHitTPReturn(mob, target)
-            targetTPReturn = xi.combat.tp.calculateTPGainOnPhysicalDamage(damage, mob:getBaseDelay(), mob, target)
+            mobTPReturn    = xi.combat.tp.getSingleMeleeHitTPReturn(mob, false)
+            targetTPReturn = xi.combat.tp.calculateTPGainOnPhysicalDamage(mob, target, damage, mob:getBaseDelay())
             -- TODO: Add TP return for MAGICAL, PHYSICAL, RANGED once added in future PRs.
         end
 
@@ -767,9 +770,18 @@ end
 -- Adds a status effect to a target
 xi.mobskills.mobStatusEffectMove = function(mob, target, typeEffect, power, tick, duration, subType, subPower, tier)
     if target:canGainStatusEffect(typeEffect, power) then
-        local fullResist = xi.data.statusEffect.isTargetResistant(mob, target, typeEffect)
-        if fullResist then
-            return xi.msg.basic.SKILL_MISS -- resist !
+        -- Check immunity. TODO: We dont fetch elements.
+        if xi.data.statusEffect.isTargetImmune(target, typeEffect, xi.element.NONE) then
+            return xi.msg.basic.SKILL_MISS -- <user> uses <skill>, but misses <target>.
+
+        -- Check resist traits. TODO: We do not fetch action objects, so we cannot set action modifiers.
+        elseif xi.data.statusEffect.isTargetResistant(mob, target, typeEffect) then
+            -- action:setModifier(xi.msg.actionModifier.RESIST) -- Resist!
+            return xi.msg.basic.SKILL_MISS                  -- <user> uses <skill>, but misses <target>.
+
+        -- Check effect incompatibilities.
+        elseif xi.data.statusEffect.isEffectNullified(target, typeEffect, 0) then
+            return xi.msg.basic.SKILL_MISS -- <user> uses <skill>, but misses <target>.
         end
 
         local element    = mob:getStatusEffectElement(typeEffect) -- TODO: Do something.
