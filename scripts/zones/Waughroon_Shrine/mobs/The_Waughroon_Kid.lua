@@ -34,12 +34,12 @@ entity.onMobFight = function(mob, target)
         mob:getHPP() <= 40 and
         mob:getLocalVar('counterstanceUsed') == 0
     then
-        mob:useMobAbility(xi.mobSkill.COUNTERSTANCE)
+        mob:useMobAbility(xi.mobSkill.COUNTERSTANCE_3)
         mob:setLocalVar('counterstanceUsed', 1)
     end
 end
 
-entity.onMobWeaponSkill = function(target, mob, skill)
+entity.onMobWeaponSkill = function(mob, target, skill, action)
     local skillId = skill:getID()
     if
         skillId == xi.mobSkill.BLOW or

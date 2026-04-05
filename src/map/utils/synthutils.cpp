@@ -319,13 +319,21 @@ auto isRightRecipe(CCharEntity* PChar) -> bool
 
     const auto possibleRecipeKey = SynthRecipe::ingredientKey(crystal, ingredient1, ingredient2, ingredient3, ingredient4, ingredient5, ingredient6, ingredient7, ingredient8);
 
-    if (synthRecipes.find(possibleRecipeKey) != synthRecipes.end())
+    if (synthRecipes.contains(possibleRecipeKey))
     {
         const auto& recipe = synthRecipes[possibleRecipeKey];
 
         if (!luautils::IsContentEnabled(recipe.ContentTag))
         {
             PChar->pushPacket<GP_SERV_COMMAND_COMBINE_ANS>(PChar, SynthesisResult::CancelBadRecipe);
+            return false;
+        }
+
+        // Check if recipe result is rare and player already owns a copy.
+        const CItem* PItem = itemutils::GetItemPointer(recipe.Result);
+        if (PItem && PItem->getFlag() & ITEM_FLAG_RARE && charutils::HasItem(PChar, recipe.Result))
+        {
+            PChar->pushPacket<GP_SERV_COMMAND_COMBINE_ANS>(PChar, SynthesisResult::CancelRareItem);
             return false;
         }
 
@@ -579,6 +587,10 @@ auto calculateSynthResult(CCharEntity* PChar) -> uint8
         {
             upgradeHQ = upgradeHQ + 1;
         }
+        else
+        {
+            break;
+        }
     }
 
     return SYNTHESIS_HQ + upgradeHQ;
@@ -610,7 +622,7 @@ auto calculateDesynthResult(CCharEntity* PChar) -> uint8
         }
         else if (synthDifficulty >= 1)
         {
-            successRate = 40.0f - 0.05f * (synthDifficulty - 1);
+            successRate = 40.0f - 5.0f * (synthDifficulty - 1);
         }
         else
         {
@@ -861,7 +873,7 @@ void handleSynthSuccess(CCharEntity* PChar)
         PChar->pushPacket<GP_SERV_COMMAND_ITEM_ATTR>(PItem, LOC_INVENTORY, invSlotID);
     }
 
-    PChar->pushPacket<GP_SERV_COMMAND_ITEM_SAME>();
+    PChar->pushPacket<GP_SERV_COMMAND_ITEM_SAME>(PChar);
 
     // Use appropiate message (Regular or desynthesis)
     const auto message = PChar->CraftContainer->getCraftType() == CRAFT_DESYNTHESIS ? SynthesisResult::SuccessDesynth : SynthesisResult::Success;
@@ -973,10 +985,12 @@ void doSynthSkillUp(CCharEntity* PChar)
             continue; // Break current loop iteration.
         }
 
-        int16 baseDiff = PChar->CraftContainer->getQuantity(skillID - 40) - charSkill / 10; // the 5 lvl difference rule for breaks does NOT consider the effects of image support/gear
-
-        // We don't Skill Up if over 10 levels above synth skill. (Or at AND above synth skill in era)
-        if ((settings::get<bool>("map.CRAFT_MODERN_SYSTEM") && (baseDiff <= -11)) || (!settings::get<bool>("map.CRAFT_MODERN_SYSTEM") && baseDiff <= 0))
+        // We don't Skill Up if the recipe isn't difficult enough.
+        // Era -> Char lvl must be bellow recipe level. Retail -> Char level myst be bellow recipe level + 10.
+        // Char level does NOT count the effects of image support/gear.
+        int16 baseDiff = PChar->CraftContainer->getQuantity(skillID - 40) - charSkill / 10;
+        int8  minDiff  = settings::get<bool>("map.CRAFT_MODERN_SYSTEM") ? -11 : 0;
+        if (baseDiff <= minDiff)
         {
             continue; // Break current loop iteration.
         }
@@ -1044,47 +1058,41 @@ void doSynthSkillUp(CCharEntity* PChar)
         //------------------------------
         // Section 4: Calculate Skill Up Amount
         //------------------------------
-        uint8 skillUpAmount = 1;
-
+        uint8 maxAllowedAmount = 1;
         if (charSkill < 600) // No skill ups over 0.1 happen over level 60.
         {
-            uint8  satier = 0; // Maximum ammount of skill-up quantity value.
-            double chance = 0.0f;
-
-            // Set satier initial rank
-            if (baseDiff >= 10)
+            if (baseDiff >= 12)
             {
-                satier = 5;
+                maxAllowedAmount = 4;
             }
-            else if (baseDiff >= 8)
+            else if (baseDiff >= 6)
             {
-                satier = 4;
-            }
-            else if (baseDiff >= 5)
-            {
-                satier = 3;
+                maxAllowedAmount = 3;
             }
             else if (baseDiff >= 3)
             {
-                satier = 2;
+                maxAllowedAmount = 2;
             }
-            else if (baseDiff >= 1)
-            {
-                satier = 1;
-            }
+        }
 
-            for (uint8 i = 0; i < 4; i++) // cicle up to 4 times until cap (0.5) or break. The lower the satier, the more likely it will break
-            {
-                chance = satier * 0.15f;
-                random = xirand::GetRandomNumber(1.);
+        // TODO: More info needed for rates. This is using what was already here since the dark ages.
+        uint8 skillUpAmount = 1;
+        if (maxAllowedAmount > 1)
+        {
+            uint8  cicles = maxAllowedAmount - 1;
+            double chance = 0.0f;
 
-                if (chance < random)
+            for (uint8 i = 1; i <= cicles; i++) // Cicle up to 3 times until cap (0.4 skill-up value) or break. The lower the maxAllowedAmount, the more likely it will break.
+            {
+                chance = maxAllowedAmount * 0.1f;
+
+                if (chance < xirand::GetRandomNumber(1.))
                 {
                     break;
                 }
 
                 skillUpAmount++;
-                satier--;
+                maxAllowedAmount--;
             }
         }
 
@@ -1135,7 +1143,7 @@ void doSynthSkillUp(CCharEntity* PChar)
 
         // Skill Up addition:
         PChar->RealSkills.skill[skillID] += skillUpAmount;
-        PChar->pushPacket<GP_SERV_COMMAND_BATTLE_MESSAGE>(PChar, PChar, skillID, skillUpAmount, MsgBasic::SKILL_GAIN);
+        PChar->pushPacket<GP_SERV_COMMAND_BATTLE_MESSAGE>(PChar, PChar, skillID, skillUpAmount, MsgBasic::SkillGain);
 
         if ((charSkill / 10) < (charSkill + skillUpAmount) / 10)
         {
@@ -1147,7 +1155,7 @@ void doSynthSkillUp(CCharEntity* PChar)
             }
 
             PChar->pushPacket<GP_SERV_COMMAND_CLISTATUS2>(PChar);
-            PChar->pushPacket<GP_SERV_COMMAND_BATTLE_MESSAGE>(PChar, PChar, skillID, (charSkill + skillUpAmount) / 10, MsgBasic::SKILL_LEVEL_UP);
+            PChar->pushPacket<GP_SERV_COMMAND_BATTLE_MESSAGE>(PChar, PChar, skillID, (charSkill + skillUpAmount) / 10, MsgBasic::SkillLevelUp);
         }
 
         charutils::SaveCharSkills(PChar, skillID);
@@ -1156,13 +1164,13 @@ void doSynthSkillUp(CCharEntity* PChar)
         if (skillCumulation > settings::get<uint16>("map.CRAFT_SPECIALIZATION_POINTS"))
         {
             PChar->RealSkills.skill[skillHighest] -= skillUpAmount;
-            PChar->pushPacket<GP_SERV_COMMAND_BATTLE_MESSAGE>(PChar, PChar, skillHighest, skillUpAmount, MsgBasic::SKILL_DROP);
+            PChar->pushPacket<GP_SERV_COMMAND_BATTLE_MESSAGE>(PChar, PChar, skillHighest, skillUpAmount, MsgBasic::SkillDrop);
 
             if ((PChar->RealSkills.skill[skillHighest] + skillUpAmount) / 10 > (PChar->RealSkills.skill[skillHighest]) / 10)
             {
                 PChar->WorkingSkills.skill[skillHighest] -= 0x20;
                 PChar->pushPacket<GP_SERV_COMMAND_CLISTATUS2>(PChar);
-                PChar->pushPacket<GP_SERV_COMMAND_BATTLE_MESSAGE>(PChar, PChar, skillHighest, (PChar->RealSkills.skill[skillHighest] - skillUpAmount) / 10, MsgBasic::SKILL_LEVEL_UP);
+                PChar->pushPacket<GP_SERV_COMMAND_BATTLE_MESSAGE>(PChar, PChar, skillHighest, (PChar->RealSkills.skill[skillHighest] - skillUpAmount) / 10, MsgBasic::SkillLevelUp);
             }
 
             charutils::SaveCharSkills(PChar, skillHighest);

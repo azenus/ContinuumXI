@@ -473,7 +473,7 @@ local addEffectStatus = function(mob, target, ae, params)
 
         duration = utils.clamp(duration, ae.minDuration, ae.maxDuration) * resist
 
-        target:addStatusEffect(ae.eff, power, tick, duration)
+        target:addStatusEffect(ae.eff, { power = power, duration = duration, origin = mob, tick = tick })
 
         if params.code then
             params.code(mob, target, power)
@@ -675,7 +675,7 @@ xi.mob.callPets = function(mob, petIds, params)
                 {
                     finishCategory = xi.action.category.MOBABILITY_FINISH,
                     animationID = 438,
-                    actionID = xi.mobSkill.CALL_WYVERN,
+                    actionID = xi.mobSkill.CALL_WYVERN_1,
                     messageID = xi.msg.basic.USES,
                     param = 0,
                 }

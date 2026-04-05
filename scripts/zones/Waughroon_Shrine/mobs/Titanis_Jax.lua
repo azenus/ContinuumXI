@@ -21,7 +21,7 @@ entity.onMobSpawn = function(mob)
     xi.mix.jobSpecial.config(mob, {
         specials =
         {
-            { id = xi.jsa.SOUL_VOICE, hpp = 60 },
+            { id = xi.mobSkill.SOUL_VOICE_1, hpp = 60 },
         },
     })
 end
@@ -76,7 +76,7 @@ entity.onMobFight = function(mob, target)
     end
 end
 
-entity.onMobWeaponSkill = function(target, mob, skill)
+entity.onMobWeaponSkill = function(mob, target, skill, action)
     if skill:getID() == xi.mobSkill.SOUL_VOICE_1 then -- 696
         mob:setLocalVar('spellList', 2)
     end

@@ -8,7 +8,7 @@ mixins = { require('scripts/mixins/rage') }
 local entity = {}
 
 local useMeikyoShisui = function(mob)
-    mob:useMobAbility(xi.jsa.MEIKYO_SHISUI)
+    mob:useMobAbility(xi.mobSkill.MEIKYO_SHISUI_1)
 end
 
 local mercurialEffects =
@@ -60,7 +60,9 @@ entity.onMobMobskillChoose = function(mob, target, skillId)
 end
 
 entity.onMobDeath = function(mob, player, optParams)
-    player:addTitle(xi.title.BRIAREUS_FELLER)
+    if player then
+        player:addTitle(xi.title.BRIAREUS_FELLER)
+    end
 end
 
 return entity

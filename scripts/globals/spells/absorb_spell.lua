@@ -57,13 +57,13 @@ xi.spells.absorb.doAbsorbStatSpell = function(caster, target, spell)
     local finalDuration = math.floor(baseDuration * darkDurationMultiplier * durationGearMultiplier) + caster:getMod(xi.mod.ENHANCES_ABSORB_EFFECTS) -- Assume additive. TODO: Testing needed.
 
     -- Apply debuff and buff if needed. Absorb effects can be overwriten via higher potency.
-    if target:addStatusEffect(enfeeblingEffect, finalPotency, 0, finalDuration) then
+    if target:addStatusEffect(enfeeblingEffect, { power = finalPotency, duration = finalDuration, origin = caster }) then
         -- Set associated message.
         spell:setMsg(absorbStatData[spellId].msg)
 
         -- Force-overwrite associated buff.
         caster:delStatusEffect(enhancingEffect)
-        caster:addStatusEffect(enhancingEffect, finalPotency, 0, finalDuration)
+        caster:addStatusEffect(enhancingEffect, { power = finalPotency, duration = finalDuration, origin = caster })
     else
         spell:setMsg(xi.msg.basic.MAGIC_NO_EFFECT)
     end
@@ -131,7 +131,7 @@ xi.spells.absorb.doDrainingSpell = function(caster, target, spell)
     local elementalStaffBonus    = xi.spells.damage.calculateElementalStaffBonus(caster, xi.element.DARK)
     local elementalAffinityBonus = xi.spells.damage.calculateElementalAffinityBonus(caster, xi.element.DARK)
     local dayAndWeather          = xi.spells.damage.calculateDayAndWeather(caster, xi.element.DARK, false)
-    local absorbMultiplier       = 1 + caster:getMod(xi.mod.AUGMENTS_ABSORB) / 100
+    local absorbMultiplier       = 1 + caster:getMod(xi.mod.AUGMENTS_ABSORB) / 100 + caster:getMod(xi.mod.ENH_DRAIN_ASPIR) / 100
     local liberatorMultiplier    = 1 + caster:getMod(xi.mod.AUGMENTS_ABSORB_LIBERATOR) / 100
     local netherVoidMultiplier   = 1
     if caster:hasStatusEffect(xi.effect.NETHER_VOID) then
@@ -195,7 +195,7 @@ xi.spells.absorb.doDrainingSpell = function(caster, target, spell)
             then
                 local duration = 180 + 180 * caster:getMod(xi.mod.DARK_MAGIC_DURATION) / 100
                 caster:delStatusEffect(xi.effect.MAX_HP_BOOST)
-                caster:addStatusEffect(xi.effect.MAX_HP_BOOST, 0, 0, duration, 0, overflow)
+                caster:addStatusEffect(xi.effect.MAX_HP_BOOST, { duration = duration, origin = caster, subPower = overflow })
             end
         end
     end

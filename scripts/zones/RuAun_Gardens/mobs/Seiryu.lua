@@ -52,8 +52,8 @@ entity.onMobFight = function(mob, target)
     end
 end
 
-entity.onMobWeaponSkill = function(target, mob, skill)
-    if skill:getID() == xi.jsa.HUNDRED_FISTS then
+entity.onMobWeaponSkill = function(mob, target, skill, action)
+    if skill:getID() == xi.mobSkill.HUNDRED_FISTS_1 then
         mob:setMagicCastingEnabled(false)
         mob:setMobAbilityEnabled(false)
     end

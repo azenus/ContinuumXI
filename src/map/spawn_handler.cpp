@@ -21,6 +21,8 @@
 
 #include "spawn_handler.h"
 
+#include <vector>
+
 #include "common/timer.h"
 #include "common/vana_time.h"
 #include "entities/mobentity.h"
@@ -37,7 +39,7 @@ SpawnHandler::SpawnHandler(CZone* PZone)
 
 // Register a given mob for respawn at its default respawn timer.
 // Respawn timer can optionally be overriden for deaggro/scripting purposes.
-void SpawnHandler::registerForRespawn(CMobEntity* PMob, const std::optional<timer::duration> respawnTime)
+void SpawnHandler::registerForRespawn(CMobEntity* PMob, const Maybe<timer::duration> respawnTime)
 {
     if (!PMob || !PMob->m_AllowRespawn || PMob->PInstance != nullptr)
     {
@@ -47,14 +49,31 @@ void SpawnHandler::registerForRespawn(CMobEntity* PMob, const std::optional<time
     const timer::duration   duration  = respawnTime.value_or(PMob->m_RespawnTime);
     const timer::time_point respawnAt = timer::now() + duration;
 
-    if (SpawnSlot* slot = PMob->GetSpawnSlot())
+    if (auto slot = PMob->GetSpawnSlot())
     {
-        const std::optional<uint32> specificMobId = respawnTime.has_value() ? std::optional(PMob->id) : std::nullopt;
-        pendingSlotRespawns_[slot]                = { respawnAt, specificMobId };
+        const auto specificMobId   = respawnTime.has_value() ? Maybe<uint32>(PMob->id) : std::nullopt;
+        pendingSlotRespawns_[slot] = { respawnAt, specificMobId };
     }
     else
     {
         pendingRespawns_[PMob->id] = respawnAt;
+    }
+}
+
+void SpawnHandler::unregister(CMobEntity* PMob)
+{
+    if (!PMob)
+    {
+        return;
+    }
+
+    if (SpawnSlot* slot = PMob->GetSpawnSlot())
+    {
+        pendingSlotRespawns_.erase(slot);
+    }
+    else
+    {
+        pendingRespawns_.erase(PMob->id);
     }
 }
 
@@ -73,6 +92,35 @@ auto SpawnHandler::isRegistered(CMobEntity* PMob) const -> bool
     return pendingRespawns_.contains(PMob->id);
 }
 
+auto SpawnHandler::getRemainingRespawnTime(CMobEntity* PMob) const -> Maybe<timer::duration>
+{
+    if (!PMob)
+    {
+        return std::nullopt;
+    }
+
+    const auto now = timer::now();
+
+    if (SpawnSlot* slot = PMob->GetSpawnSlot())
+    {
+        if (auto it = pendingSlotRespawns_.find(slot); it != pendingSlotRespawns_.end())
+        {
+            const auto remaining = it->second.respawnAt - now;
+            return remaining > timer::duration::zero() ? remaining : timer::duration::zero();
+        }
+    }
+    else
+    {
+        if (auto it = pendingRespawns_.find(PMob->id); it != pendingRespawns_.end())
+        {
+            const auto remaining = it->second - now;
+            return remaining > timer::duration::zero() ? remaining : timer::duration::zero();
+        }
+    }
+
+    return std::nullopt;
+}
+
 // Every 30 seconds, attempt to spawn any mob pending respawn.
 // Mobs are respawned if:
 // - Their respawn timer is due within the next 15s (half interval)
@@ -83,42 +131,53 @@ void SpawnHandler::Tick(const timer::time_point now)
 {
     const timer::time_point spawnThreshold = now + spawnWindow_;
 
+    std::vector<CMobEntity*> mobsToSpawn;
+
     // Process non-slotted mobs
-    std::erase_if(pendingRespawns_, [&](const auto& pair)
-                  {
-                      if (pair.second > spawnThreshold)
-                      {
-                          return false;
-                      }
+    std::erase_if(
+        pendingRespawns_,
+        [&](const auto& pair)
+        {
+            if (pair.second > spawnThreshold)
+            {
+                return false;
+            }
 
-                      const uint16 targid = static_cast<uint16>(pair.first & 0x0FFF);
-                      auto*        PMob   = static_cast<CMobEntity*>(zone_->GetEntity(targid, TYPE_MOB));
+            const uint16 targid = static_cast<uint16>(pair.first & 0x0FFF);
+            auto*        PMob   = static_cast<CMobEntity*>(zone_->GetEntity(targid, TYPE_MOB));
 
-                      if (!PMob)
-                      {
-                          return true;
-                      }
+            if (!PMob)
+            {
+                return true;
+            }
 
-                      if (!canSpawnNow(PMob) || luautils::OnMobSpawnCheck(PMob) != 0)
-                      {
-                          return false;
-                      }
+            if (!canSpawnNow(PMob) || luautils::OnMobSpawnCheck(PMob) != 0)
+            {
+                return false;
+            }
 
-                      PMob->Spawn();
-                      return true;
-                  });
+            mobsToSpawn.push_back(PMob);
+            return true;
+        });
+
+    for (auto* PMob : mobsToSpawn)
+    {
+        PMob->Spawn();
+    }
 
     // Process slotted spawns
-    std::erase_if(pendingSlotRespawns_, [&](const auto& pair)
-                  {
-                      if (pair.second.respawnAt > spawnThreshold)
-                      {
-                          return false;
-                      }
+    std::erase_if(
+        pendingSlotRespawns_,
+        [&](const auto& pair)
+        {
+            if (pair.second.respawnAt > spawnThreshold)
+            {
+                return false;
+            }
 
-                      SpawnSlot* slot = pair.first;
-                      return !slot || slot->TrySpawn(pair.second.specificMobId);
-                  });
+            SpawnSlot* slot = pair.first;
+            return !slot || slot->TrySpawn(pair.second.specificMobId);
+        });
 }
 
 // On TOTD change, process all relevant despawns.
@@ -129,24 +188,26 @@ void SpawnHandler::onTOTDChange(const vanadiel_time::TOTD totd) const
     {
         case vanadiel_time::TOTD::NEWDAY:
         {
-            zone_->ForEachMob([](CMobEntity* PMob)
-                              {
-                                  if (PMob->m_SpawnType & SPAWNTYPE_ATNIGHT)
-                                  {
-                                      PMob->SetDespawnTime(1ms);
-                                  }
-                              });
+            zone_->ForEachMob(
+                [](CMobEntity* PMob)
+                {
+                    if (PMob->m_SpawnType & SPAWNTYPE_ATNIGHT)
+                    {
+                        PMob->SetDespawnTime(1ms);
+                    }
+                });
         }
         break;
         case vanadiel_time::TOTD::DAWN:
         {
-            zone_->ForEachMob([](CMobEntity* PMob)
-                              {
-                                  if (PMob->m_SpawnType & SPAWNTYPE_ATEVENING)
-                                  {
-                                      PMob->SetDespawnTime(1ms);
-                                  }
-                              });
+            zone_->ForEachMob(
+                [](CMobEntity* PMob)
+                {
+                    if (PMob->m_SpawnType & SPAWNTYPE_ATEVENING)
+                    {
+                        PMob->SetDespawnTime(1ms);
+                    }
+                });
         }
         break;
         default:
@@ -159,23 +220,24 @@ void SpawnHandler::onTOTDChange(const vanadiel_time::TOTD totd) const
 void SpawnHandler::onWeatherChange(Weather weather) const
 {
     const auto element = zoneutils::GetWeatherElement(weather);
-    zone_->ForEachMob([weather, element](CMobEntity* PMob)
-                      {
-                          if (PMob->m_EcoSystem == ECOSYSTEM::ELEMENTAL && PMob->PMaster == nullptr && PMob->m_SpawnType & SPAWNTYPE_WEATHER)
-                          {
-                              if (PMob->m_Element != element)
-                              {
-                                  PMob->SetDespawnTime(1s);
-                              }
-                          }
-                          else if (PMob->m_SpawnType & SPAWNTYPE_FOG)
-                          {
-                              if (weather != Weather::Fog)
-                              {
-                                  PMob->SetDespawnTime(1s);
-                              }
-                          }
-                      });
+    zone_->ForEachMob(
+        [weather, element](CMobEntity* PMob)
+        {
+            if (PMob->m_EcoSystem == ECOSYSTEM::ELEMENTAL && PMob->PMaster == nullptr && PMob->m_SpawnType & SPAWNTYPE_WEATHER)
+            {
+                if (PMob->m_Element != element)
+                {
+                    PMob->SetDespawnTime(1s);
+                }
+            }
+            else if (PMob->m_SpawnType & SPAWNTYPE_FOG)
+            {
+                if (weather != Weather::Fog)
+                {
+                    PMob->SetDespawnTime(1s);
+                }
+            }
+        });
 }
 
 // Ensures the mob meets all conditions for spawning on current wave: TOTD, Weather, Respawn disabled etc.

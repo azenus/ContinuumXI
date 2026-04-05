@@ -152,6 +152,7 @@ local function getSingleHitDamage(attacker, target, dmg, ftp, wsParams, calcPara
     -- check shadows
     if
         not calcParams.guaranteedHit and
+        not wsParams.ignoreShadows and
         shadowAbsorb(target)
     then
         -- shadow absorb logic
@@ -553,7 +554,6 @@ xi.weaponskills.calculateRawWSDmg = function(attacker, target, wsID, tp, action,
 
     -- Do the extra hit for our offhand if applicable
     if calcParams.extraOffhandHit and hitsDone < 8 and finaldmg < targetHp then
-        calcParams.hitsLanded = 0
         local offhandDmg      = calcParams.weaponDamage[2] + calcParams.fSTR + wsc * alpha
         hitdmg, calcParams    = getSingleHitDamage(attacker, target, offhandDmg, ftp, wsParams, calcParams)
 
@@ -589,7 +589,6 @@ xi.weaponskills.calculateRawWSDmg = function(attacker, target, wsID, tp, action,
 
     while hitsDone < 8 and offhandMultiHitsDone < numOffhandMultis and finaldmg < targetHp do
         local offhandDmg      = calcParams.weaponDamage[2] + calcParams.fSTR + wsc * alpha
-        calcParams.hitsLanded = 0
         hitdmg, calcParams    = getSingleHitDamage(attacker, target, offhandDmg, ftp, wsParams, calcParams)
 
         if calcParams.melee then
@@ -778,6 +777,8 @@ xi.weaponskills.doRangedWeaponskill = function(attacker, target, wsID, wsParams,
 
     -- Delete statuses that may have been spent by the WS
     attacker:delStatusEffectsByFlag(xi.effectFlag.DETECTABLE)
+    attacker:delStatusEffect(xi.effect.FLASHY_SHOT)
+    attacker:delStatusEffect(xi.effect.STEALTH_SHOT)
 
     -- Calculate reductions
     finaldmg = target:rangedDmgTaken(finaldmg)
@@ -819,6 +820,7 @@ xi.weaponskills.doMagicWeaponskill = function(attacker, target, wsID, wsParams, 
     local calcParams =
     {
         ['shadowsAbsorbed'] = 0,
+        ['hitsLanded']      = 1,
         ['tpHitsLanded']    = 1,
         ['extraHitsLanded'] = 0,
         ['bonusTP']         = wsParams.bonusTP or 0,
@@ -917,7 +919,7 @@ end
 xi.weaponskills.takeWeaponskillDamage = function(defender, attacker, wsParams, primaryMsg, attack, wsResults, action)
     local finaldmg = wsResults.finalDmg
 
-    if wsResults.tpHitsLanded + wsResults.extraHitsLanded > 0 then
+    if wsResults.hitsLanded > 0 then
         if finaldmg >= 0 then
             if primaryMsg then
                 action:messageID(defender:getID(), xi.msg.basic.DAMAGE)
@@ -1079,6 +1081,6 @@ xi.weaponskills.handleWeaponskillEffect = function(actor, target, effectId, acti
         not xi.data.statusEffect.isTargetResistant(actor, target, effectId) and
         not xi.data.statusEffect.isEffectNullified(target, effectId, 0)
     then
-        target:addStatusEffect(effectId, power, 0, duration)
+        target:addStatusEffect(effectId, { power = power, duration = duration, origin = actor })
     end
 end

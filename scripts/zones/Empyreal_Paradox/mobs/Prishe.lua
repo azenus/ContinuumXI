@@ -20,12 +20,8 @@ local helperConfig =
     isAggroable    = true,
     targetMobs     = function(mob)
         local battlefieldArea = mob:getBattlefield():getArea()
-        local areaOffset = (battlefieldArea - 1) * 2
-        return
-        {
-            ID.mob.PROMATHIA + areaOffset,     -- Promathia
-            ID.mob.PROMATHIA + areaOffset + 1, -- Promathia v2
-        }
+        local areaOffset      = (battlefieldArea - 1) * 2
+        return { ID.mob.PROMATHIA + areaOffset, ID.mob.PROMATHIA + areaOffset + 1 }
     end,
 }
 
@@ -53,7 +49,7 @@ local itemActions =
         end,
 
         action = function(mob)
-            mob:addStatusEffect(xi.effect.FOOD, 0, 0, 150, 0, 0, 0, xi.effectSourceType.FOOD, 4511, mob:getID())
+            mob:addStatusEffect(xi.effect.FOOD, { duration = 150, origin = mob, sourceType = xi.effectSourceType.FOOD, sourceTypeParam = 4511 })
             mob:messageText(mob, ID.text.PRISHE_TEXT + 8, false)
             mob:useMobAbility(xi.mobSkill.ITEM_1_PRISHE)
         end,
@@ -66,7 +62,7 @@ local itemActions =
         end,
 
         action = function(mob)
-            mob:addStatusEffect(xi.effect.PHYSICAL_SHIELD, 1, 0, 30)
+            mob:addStatusEffect(xi.effect.PHYSICAL_SHIELD, { power = 1, duration = 30, origin = mob })
             mob:messageText(mob, ID.text.PRISHE_TEXT + 10, false)
             mob:useMobAbility(xi.mobSkill.ITEM_2_PRISHE)
         end,
@@ -79,7 +75,7 @@ local itemActions =
         end,
 
         action = function(mob)
-            mob:addStatusEffect(xi.effect.MAGIC_SHIELD, 1, 0, 30)
+            mob:addStatusEffect(xi.effect.MAGIC_SHIELD, { power = 1, duration = 30, origin = mob })
             mob:messageText(mob, ID.text.PRISHE_TEXT + 11, false)
             mob:useMobAbility(xi.mobSkill.ITEM_2_PRISHE)
         end,
@@ -134,8 +130,8 @@ entity.onMobSpawn = function(mob)
         {
             specials =
             {
-                { id = xi.jsa.HUNDRED_FISTS, hpp = 50 },
-                { id = xi.jsa.BENEDICTION,   hpp = 10 },
+                { id = xi.mobSkill.HUNDRED_FISTS_1, hpp = 50 },
+                { id = xi.mobSkill.BENEDICTION_1,   hpp = 10 },
             },
         })
 
@@ -144,8 +140,8 @@ entity.onMobSpawn = function(mob)
         {
             [xi.mobSkill.AURORAL_UPPERCUT_1   ] = ID.text.PRISHE_TEXT + 4,
             [xi.mobSkill.NULLIFYING_DROPKICK_1] = ID.text.PRISHE_TEXT + 5,
-            [xi.jsa.HUNDRED_FISTS             ] = ID.text.PRISHE_TEXT + 6,
-            [xi.jsa.BENEDICTION               ] = ID.text.PRISHE_TEXT + 7,
+            [xi.mobSkill.HUNDRED_FISTS_1      ] = ID.text.PRISHE_TEXT + 6,
+            [xi.mobSkill.BENEDICTION_1        ] = ID.text.PRISHE_TEXT + 7,
         }
 
         if message[skillID] then
@@ -153,10 +149,10 @@ entity.onMobSpawn = function(mob)
         end
     end)
 
-    mob:addListener('WEAPONSKILL_STATE_EXIT', 'PRISHE_DAEDALUS', function(mobArg, skillID)
+    mob:addListener('WEAPONSKILL_STATE_EXIT', 'PRISHE_DAEDALUS', function(mobArg, skillId, wasExecuted)
         -- Handle Daedulus Wing TP restoration
         if
-            skillID == xi.mobSkill.ITEM_1_PRISHE and
+            skillId == xi.mobSkill.ITEM_1_PRISHE and
             mobArg:getLocalVar('daedulus') == 1
         then
             mobArg:setTP(3000)
@@ -164,7 +160,7 @@ entity.onMobSpawn = function(mob)
         end
 
         -- Reset animation sub after Nullifying Dropkick completes
-        if skillID == xi.mobSkill.NULLIFYING_DROPKICK_1 then
+        if skillId == xi.mobSkill.NULLIFYING_DROPKICK_1 then
             local target = mobArg:getTarget()
             if target then
                 target:setAnimationSub(0)
@@ -254,9 +250,7 @@ entity.onMobSpellChoose = function(mob, target, spellId)
         [4] = { xi.magic.spell.CURE_IV,      mob,    true,  xi.action.type.HEALING_TARGET,  33, 0, 100 },
     }
 
-    local groupTable = battlefield:getPlayers()
-
-    return xi.combat.behavior.chooseAction(mob, target, groupTable, spellList)
+    return xi.combat.behavior.chooseAction(mob, target, battlefield:getPlayers(), spellList)
 end
 
 entity.onMobDisengage = function(mob)
