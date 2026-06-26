@@ -7,10 +7,8 @@ local ID = zones[xi.zone.DYNAMIS_XARCABARD]
 ---@type TMobEntity
 local entity = {}
 
-entity.onMobInitialize = function(mob)
-end
-
 entity.onMobSpawn = function(mob)
+    xi.dynamis.mobInfo(mob)
     local dynaLord = GetMobByID(ID.mob.DYNAMIS_LORD)
 
     if
@@ -41,9 +39,6 @@ entity.onMobFight = function(mob, target)
         yang:spawn()
         yang:updateEnmity(target)
     end
-end
-
-entity.onMobDeath = function(mob, player, optParams)
 end
 
 entity.onMobDespawn = function(mob)

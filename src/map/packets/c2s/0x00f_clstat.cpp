@@ -21,13 +21,13 @@
 
 #include "0x00f_clstat.h"
 
-#include "entities/charentity.h"
+#include "entities/char_entity.h"
 #include "utils/charutils.h"
 
 auto GP_CLI_COMMAND_CLSTAT::validate(MapSession* PSession, const CCharEntity* PChar) const -> PacketValidationResult
 {
     // No parameter to validate for this packet.
-    return PacketValidator();
+    return PacketValidator(PChar);
 }
 
 void GP_CLI_COMMAND_CLSTAT::process(MapSession* PSession, CCharEntity* PChar) const

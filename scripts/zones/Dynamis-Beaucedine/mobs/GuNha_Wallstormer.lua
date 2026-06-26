@@ -23,7 +23,8 @@ entity.phList =
     [ID.mob.GUNHA_WALLSTORMER - 6] = ID.mob.GUNHA_WALLSTORMER, -- Vanguard_Vindicator
 }
 
-entity.onMobDeath = function(mob, player, optParams)
+entity.onMobSpawn = function(mob)
+    xi.dynamis.mobInfo(mob)
 end
 
 return entity

@@ -23,25 +23,22 @@
 
 #include "0x0e7_reqlogout.h"
 #include "ai/ai_container.h"
-#include "entities/charentity.h"
+#include "entities/char_entity.h"
 #include "status_effect_container.h"
 
 auto GP_CLI_COMMAND_CAMP::validate(MapSession* PSession, const CCharEntity* PChar) const -> PacketValidationResult
 {
-    return PacketValidator()
-        .isNormalStatus(PChar)
-        .isNotPreventedAction(PChar)
-        .isNotCrafting(PChar)
-        .mustNotEqual(PChar->PAI->IsEngaged(), true, "Cannot heal while engaged in combat")
-        .oneOf<GP_CLI_COMMAND_REQLOGOUT_MODE>(Mode)
+    return PacketValidator(PChar)
+        .blockedBy({ BlockedState::InEvent, BlockedState::AbnormalStatus, BlockedState::Crafting, BlockedState::PreventAction, BlockedState::Engaged })
+        .oneOf<GP_CLI_COMMAND_REQLOGOUT_MODE>(this->Mode)
         .mustNotEqual(
             PChar->animation == ANIMATION_HEALING &&
-                Mode == static_cast<uint32_t>(GP_CLI_COMMAND_CAMP_MODE::On),
+                this->Mode == static_cast<uint32_t>(GP_CLI_COMMAND_CAMP_MODE::On),
             true,
             "Requested healing when already healing")
         .mustNotEqual(
             PChar->animation != ANIMATION_HEALING &&
-                Mode == static_cast<uint32_t>(GP_CLI_COMMAND_CAMP_MODE::Off),
+                this->Mode == static_cast<uint32_t>(GP_CLI_COMMAND_CAMP_MODE::Off),
             true,
             "Requested stop healing when not healing");
 }
@@ -56,16 +53,17 @@ void GP_CLI_COMMAND_CAMP::process(MapSession* PSession, CCharEntity* PChar) cons
             PChar->PPet->PAI->Disengage();
         }
 
-        PChar->StatusEffectContainer->AddStatusEffect(new CStatusEffect(EFFECT_HEALING, 0, 0, std::chrono::seconds(settings::get<uint8>("map.HEALING_TICK_DELAY")), 0s));
+        const auto healingTickDelay = std::chrono::seconds(settings::get<uint8>("map.HEALING_TICK_DELAY"));
+        PChar->StatusEffectContainer->AddStatusEffect(xi::StatusEffect::Healing, 0, 0, healingTickDelay, 0s);
     };
 
     auto disableHealing = [&]()
     {
-        PChar->StatusEffectContainer->DelStatusEffectSilent(EFFECT_HEALING);
+        PChar->StatusEffectContainer->DelStatusEffectSilent(xi::StatusEffect::Healing);
     };
 
     // Note: The status effect lua takes care of changing the animation.
-    switch (static_cast<GP_CLI_COMMAND_CAMP_MODE>(Mode))
+    switch (static_cast<GP_CLI_COMMAND_CAMP_MODE>(this->Mode))
     {
         case GP_CLI_COMMAND_CAMP_MODE::Toggle:
             if (PChar->animation == ANIMATION_HEALING)

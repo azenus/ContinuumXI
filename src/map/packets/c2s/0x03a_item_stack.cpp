@@ -21,19 +21,19 @@
 
 #include "0x03a_item_stack.h"
 
-#include "entities/charentity.h"
+#include "entities/char_entity.h"
 #include "packets/s2c/0x01d_item_same.h"
 #include "utils/charutils.h"
 
 auto GP_CLI_COMMAND_ITEM_STACK::validate(MapSession* PSession, const CCharEntity* PChar) const -> PacketValidationResult
 {
-    return PacketValidator()
-        .oneOf<CONTAINER_ID>(Category); // Retail honors _every_ container, even if you don't presently have access.
+    return PacketValidator(PChar)
+        .oneOf<CONTAINER_ID>(this->Category); // Retail honors _every_ container, even if you don't presently have access.
 }
 
 void GP_CLI_COMMAND_ITEM_STACK::process(MapSession* PSession, CCharEntity* PChar) const
 {
-    CItemContainer* PItemContainer = PChar->getStorage(Category);
+    CItemContainer* PItemContainer = PChar->getStorage(this->Category);
 
     const uint8 size = PItemContainer->GetSize();
 

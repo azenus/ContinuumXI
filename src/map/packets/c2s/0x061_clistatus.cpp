@@ -21,14 +21,14 @@
 
 #include "0x061_clistatus.h"
 
-#include "entities/charentity.h"
+#include "entities/char_entity.h"
 #include "packets/s2c/0x061_clistatus.h"
 #include "utils/charutils.h"
 
 auto GP_CLI_COMMAND_CLISTATUS::validate(MapSession* PSession, const CCharEntity* PChar) const -> PacketValidationResult
 {
-    return PacketValidator()
-        .range("unknown00", unknown00, 0, 1);
+    return PacketValidator(PChar)
+        .range("unknown00", this->unknown00, 0, 1);
 }
 
 void GP_CLI_COMMAND_CLISTATUS::process(MapSession* PSession, CCharEntity* PChar) const

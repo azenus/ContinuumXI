@@ -27,10 +27,11 @@
 #include "campaign_system.h"
 #include "common/logging.h"
 #include "conquest_system.h"
-#include "entities/mobentity.h"
-#include "entities/npcentity.h"
+#include "entities/mob_entity.h"
+#include "entities/npc_entity.h"
 #include "enums/weather.h"
 #include "items/item_weapon.h"
+#include "itemutils.h"
 #include "lua/luautils.h"
 #include "map_networking.h"
 #include "mob_modifier.h"
@@ -77,22 +78,16 @@ void TOTDChange(const vanadiel_time::TOTD TOTD)
 void InitializeWeather()
 {
     TracyZoneScoped;
+
     for (const auto PZone : g_PZoneList | std::views::values)
     {
-        if (!PZone->IsWeatherStatic())
+        if (!PZone->weather().isStatic())
         {
             PZone->UpdateWeather();
         }
         else
         {
-            if (!PZone->m_WeatherVector.empty())
-            {
-                PZone->SetWeather(static_cast<Weather>(PZone->m_WeatherVector.at(0).common));
-            }
-            else
-            {
-                PZone->SetWeather(Weather::None); // If not weather data found, initialize with WEATHER_NONE
-            }
+            PZone->SetWeather(PZone->weather().entryForDay(0).common);
         }
     }
     ShowDebug("InitializeWeather Finished");
@@ -266,6 +261,7 @@ auto IsZoneAssignedToThisProcess(const IPP mapIPP, const ZONEID zoneId) -> bool
 auto LoadNPCList(Scheduler& scheduler, const std::vector<uint16>& zoneIds) -> Task<void>
 {
     TracyZoneScoped;
+
     ShowInfo("Loading NPCs");
 
     co_await Scheduler::TaskGroup(
@@ -350,7 +346,7 @@ auto LoadNPCList(Scheduler& scheduler, const std::vector<uint16>& zoneIds) -> Ta
                                     db::extractFromBlob(rset, "look", PNpc->look);
 
                                     PNpc->name_prefix = rset->get<uint8>("name_prefix");
-                                    PNpc->widescan    = rset->get<uint8>("widescan");
+                                    PNpc->setWidescan(rset->get<uint8>("widescan"));
 
                                     PZone->InsertNPC(PNpc);
                                 }
@@ -392,6 +388,7 @@ auto LoadNPCList(Scheduler& scheduler, const std::vector<uint16>& zoneIds) -> Ta
 auto LoadMOBList(Scheduler& scheduler, const std::vector<uint16>& zoneIds) -> Task<void>
 {
     TracyZoneScoped;
+
     ShowInfo("Loading Mobs");
 
     const auto normalLevelRangeMin = settings::get<uint8>("main.NORMAL_MOB_MAX_LEVEL_RANGE_MIN");
@@ -419,17 +416,17 @@ auto LoadMOBList(Scheduler& scheduler, const std::vector<uint16>& zoneIds) -> Ta
                                            "magical_sdt, fire_sdt, ice_sdt, wind_sdt, earth_sdt, lightning_sdt, water_sdt, light_sdt, dark_sdt, "
                                            "fire_res_rank, ice_res_rank, wind_res_rank, earth_res_rank, lightning_res_rank, water_res_rank, light_res_rank, dark_res_rank, "
                                            "paralyze_res_rank, bind_res_rank, silence_res_rank, slow_res_rank, poison_res_rank, light_sleep_res_rank, dark_sleep_res_rank, blind_res_rank, "
-                                           "Element, mob_pools.familyid, mob_family_system.superFamilyID, name_prefix, entityFlags, animationsub, "
-                                           "(mob_family_system.HP / 100), (mob_family_system.MP / 100), spellList, mob_groups.poolid, "
-                                           "allegiance, namevis, aggro, roamflag, mob_pools.skill_list_id, mob_pools.true_detection, mob_family_system.detects, "
-                                           "mob_family_system.charmable, mob_groups.content_tag, "
+                                           "Element, mob_pools.speciesid, mob_species_system.familyID, name_prefix, entityFlags, animationsub, "
+                                           "(mob_species_system.HP / 100), (mob_species_system.MP / 100), spellList, mob_groups.poolid, "
+                                           "allegiance, namevis, aggro, roamflag, mob_pools.skill_list_id, mob_pools.true_detection, mob_species_system.detects, "
+                                           "mob_species_system.charmable, mob_groups.content_tag, "
                                            "mob_pools.modelSize, mob_pools.modelHitboxSize, "
                                            "mob_spawn_slots.spawnslotid, mob_spawn_slots.chance "
                                            "FROM mob_groups INNER JOIN mob_pools ON mob_groups.poolid = mob_pools.poolid "
                                            "INNER JOIN mob_resistances ON mob_resistances.resist_id = mob_pools.resist_id "
                                            "INNER JOIN mob_spawn_points ON mob_groups.groupid = mob_spawn_points.groupid "
                                            "LEFT JOIN mob_spawn_slots ON (mob_spawn_slots.spawnslotid = mob_spawn_points.spawnslotid AND mob_spawn_slots.zoneid = mob_groups.zoneid) "
-                                           "INNER JOIN mob_family_system ON mob_pools.familyid = mob_family_system.familyID "
+                                           "INNER JOIN mob_species_system ON mob_pools.speciesid = mob_species_system.speciesID "
                                            "INNER JOIN zone_settings ON mob_groups.zoneid = zone_settings.zoneid "
                                            "WHERE NOT (pos_x = 0 AND pos_y = 0 AND pos_z = 0) "
                                            "AND mob_groups.zoneid = ((mobid >> 12) & 0xFFF) "
@@ -469,6 +466,12 @@ auto LoadMOBList(Scheduler& scheduler, const std::vector<uint16>& zoneIds) -> Ta
                                     PMob->m_SpawnType   = rset->get<SPAWNTYPE>("spawntype");
                                     PMob->m_DropID      = rset->get<uint32>("dropid");
 
+                                    // Check if the drop list is valid
+                                    if (PMob->m_DropID != 0 && itemutils::GetDropList(PMob->m_DropID) == nullptr)
+                                    {
+                                        ShowErrorFmt("LoadMOBList: Drop list {} on mob {} (zone id {}) set but has no entries!", PMob->m_DropID, PMob->name, zoneId);
+                                    }
+
                                     PMob->HPmodifier = rset->get<uint32>("HP");
                                     PMob->MPmodifier = rset->get<uint32>("MP");
 
@@ -487,14 +490,14 @@ auto LoadMOBList(Scheduler& scheduler, const std::vector<uint16>& zoneIds) -> Ta
 
                                     PMob->m_dmgMult = rset->get<uint16>("cmbDmgMult");
 
-                                    mainWeapon->setDelay((rset->get<uint16>("cmbDelay") * 1000) / 60);
-                                    mainWeapon->setBaseDelay((rset->get<uint16>("cmbDelay") * 1000) / 60);
+                                    mainWeapon->setDelay(rset->get<uint16>("cmbDelay"));
+                                    mainWeapon->setBaseDelay(rset->get<uint16>("cmbDelay"));
 
                                     PMob->m_Behavior  = rset->get<uint16>("behavior");
                                     PMob->m_Link      = rset->get<uint32>("links");
                                     PMob->m_Type      = rset->get<MOBTYPE>("mobType");
                                     PMob->m_Immunity  = rset->get<uint32>("immunity");
-                                    PMob->m_EcoSystem = rset->get<ECOSYSTEM>("ecosystemID");
+                                    PMob->m_EcoSystem = rset->get<xi::Ecosystem>("ecosystemID");
 
                                     PMob->baseSpeed      = rset->get<uint8>("speed");
                                     PMob->animationSpeed = rset->get<uint8>("speed");
@@ -547,8 +550,8 @@ auto LoadMOBList(Scheduler& scheduler, const std::vector<uint16>& zoneIds) -> Ta
                                     PMob->setModifier(Mod::BLIND_RES_RANK, rset->get<int8>("blind_res_rank"));
 
                                     PMob->m_Element     = rset->get<uint8>("Element");
-                                    PMob->m_Family      = rset->get<uint16>("familyid");
-                                    PMob->m_SuperFamily = rset->get<uint16>("superFamilyID");
+                                    PMob->m_Species     = rset->get<uint16>("speciesid");
+                                    PMob->m_Family      = rset->get<uint16>("familyID");
                                     PMob->m_name_prefix = rset->get<uint8>("name_prefix");
                                     PMob->m_flags       = rset->get<uint32>("entityFlags");
 
@@ -574,8 +577,8 @@ auto LoadMOBList(Scheduler& scheduler, const std::vector<uint16>& zoneIds) -> Ta
                                     }
 
                                     // Setup HP / MP Stat Percentage Boost
-                                    PMob->HPscale = rset->get<float>("(mob_family_system.HP / 100)");
-                                    PMob->MPscale = rset->get<float>("(mob_family_system.MP / 100)");
+                                    PMob->HPscale = rset->get<float>("(mob_species_system.HP / 100)");
+                                    PMob->MPscale = rset->get<float>("(mob_species_system.MP / 100)");
 
                                     PMob->m_SpellListContainer = mobSpellList::GetMobSpellList(rset->get<uint16>("spellList"));
 
@@ -601,11 +604,7 @@ auto LoadMOBList(Scheduler& scheduler, const std::vector<uint16>& zoneIds) -> Ta
 
                                     if (slotId > 0)
                                     {
-                                        auto& spawnSlot = PZone->m_spawnSlots[slotId];
-                                        if (!spawnSlot)
-                                        {
-                                            spawnSlot = std::make_unique<SpawnSlot>();
-                                        }
+                                        SpawnSlot* spawnSlot = PZone->spawnHandler().getOrCreateSpawnSlot(slotId);
 
                                         if (PMob->m_SpawnType == SPAWNTYPE_SCRIPTED)
                                         {
@@ -682,7 +681,7 @@ auto LoadMOBList(Scheduler& scheduler, const std::vector<uint16>& zoneIds) -> Ta
                 [&PZone](CMobEntity* PMob)
                 {
                     // Skip mobs already registered via setRespawnTime in onMobInitialize - let SpawnHandler handle them
-                    if (PZone->spawnHandler()->isRegistered(PMob))
+                    if (PZone->spawnHandler().isRegistered(PMob))
                     {
                         if (PMob->m_SpawnType == SPAWNTYPE_SCRIPTED && PMob->m_RespawnTime > 0s)
                         {
@@ -706,7 +705,7 @@ auto LoadMOBList(Scheduler& scheduler, const std::vector<uint16>& zoneIds) -> Ta
 
                         // Condition-based mobs (time/weather) register with 0s so they spawn when conditions are met
                         const bool isConditionBased = PMob->m_SpawnType & (SPAWNTYPE_ATNIGHT | SPAWNTYPE_ATEVENING | SPAWNTYPE_WEATHER | SPAWNTYPE_FOG);
-                        PZone->spawnHandler()->registerForRespawn(PMob, isConditionBased ? std::make_optional(0s) : std::nullopt);
+                        PZone->spawnHandler().registerForRespawn(PMob, isConditionBased ? std::make_optional(0s) : std::nullopt);
                     }
                 });
         });
@@ -749,8 +748,6 @@ auto CreateZone(Scheduler& scheduler, MapConfig config, uint16 ZoneID) -> CZone*
 
 auto LoadZones(Scheduler& scheduler, MapConfig config, const std::vector<uint16>& zoneIds) -> Task<void>
 {
-    TracyZoneScoped;
-
     std::vector<uint16> zonesIdsToLoad;
 
     for (const auto zoneId : zoneIds)
@@ -781,8 +778,9 @@ auto LoadZones(Scheduler& scheduler, MapConfig config, const std::vector<uint16>
         g_PZoneList[0] = CreateZone(scheduler, config, 0);
     }
 
+    // Phase 1: Load ximeshes (navmesh build depends on ximesh)
     co_await Scheduler::TaskGroup(
-        zoneIds.size() * 3,
+        zonesIdsToLoad.size(),
         [&](auto& add)
         {
             for (const auto zoneId : zonesIdsToLoad)
@@ -790,22 +788,17 @@ auto LoadZones(Scheduler& scheduler, MapConfig config, const std::vector<uint16>
                 add(scheduler.spawnOnWorkerThread(
                     [zoneId]()
                     {
-                        g_PZoneList[zoneId]->LoadNavMesh();
-                    }));
-
-                add(scheduler.spawnOnWorkerThread(
-                    [zoneId]()
-                    {
-                        g_PZoneList[zoneId]->LoadZoneMesh();
-                    }));
-
-                add(scheduler.spawnOnWorkerThread(
-                    [zoneId]()
-                    {
-                        g_PZoneList[zoneId]->LoadZoneLos();
+                        g_PZoneList[zoneId]->LoadXiMesh();
                     }));
             }
         });
+
+    // Phase 2: Load/build navmeshes (requires ximesh; processed serially because
+    // each zone's build is a coroutine that dispatches tile work to workers)
+    for (const auto zoneId : zonesIdsToLoad)
+    {
+        co_await g_PZoneList[zoneId]->LoadNavMesh();
+    }
 
     // IDs attached to xi.zone[name] need to be populated before NPCs and Mobs are loaded
     for (const auto zoneId : zonesIdsToLoad)
@@ -859,6 +852,8 @@ auto Initialize(Scheduler& scheduler, MapConfig config) -> Task<void>
     lazyLoad.managedZones = std::set(zones.begin(), zones.end());
 
     luautils::InitInteractionGlobal();
+
+    co_return;
 }
 
 auto ProcessLoadQueue(Scheduler& scheduler, MapConfig config) -> Task<void>
@@ -1339,6 +1334,40 @@ auto GetZoneIPP(uint16 zoneId) -> uint64
     return ipp;
 }
 
+auto IsZoneAtPlayerCap(uint16 zoneId, bool isGM) -> bool
+{
+    const auto cap = settings::get<uint16>("map.ZONE_PLAYER_CAP");
+    if (cap == 0)
+    {
+        return false;
+    }
+
+    const auto reserved  = settings::get<uint16>("map.ZONE_PLAYER_GM_RESERVED");
+    const auto threshold = isGM ? cap : static_cast<uint16>(cap > reserved ? cap - reserved : 0);
+
+    const auto rset = db::preparedStmt(
+        "SELECT z.zonetype, "
+        "  (SELECT COUNT(*) FROM accounts_sessions s "
+        "    JOIN chars c ON c.charid = s.charid "
+        "    WHERE c.pos_zone = ?) AS pop "
+        "FROM zone_settings z WHERE z.zoneid = ? LIMIT 1",
+        zoneId,
+        zoneId);
+
+    FOR_DB_SINGLE_RESULT(rset)
+    {
+        const auto zoneType = rset->get<uint16>("zonetype");
+        if (zoneType & ZONE_TYPE::INSTANCED)
+        {
+            return false;
+        }
+
+        return rset->get<uint32>("pop") >= threshold;
+    }
+
+    return false;
+}
+
 /************************************************************************
  *                                                                       *
  *  Check whether or not the zone is a residential area                  *
@@ -1358,7 +1387,9 @@ void AfterZoneIn(CBaseEntity* PEntity)
         return;
     }
 
-    if (!PChar->PBattlefield || !PChar->PBattlefield->isEntered(PChar))
+    const bool inBattlefield    = PChar->PBattlefield && PChar->PBattlefield->isEntered(PChar);
+    const bool inCappedInstance = PChar->PInstance && PChar->PInstance->GetLevelCap() > 0;
+    if (!inBattlefield && !inCappedInstance)
     {
         GetZone(PChar->getZone())->updateCharLevelRestriction(PChar);
     }

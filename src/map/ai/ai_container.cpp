@@ -24,10 +24,10 @@
 #include "ai/controllers/mob_controller.h"
 #include "ai/controllers/pet_controller.h"
 #include "ai/controllers/player_controller.h"
-#include "entities/baseentity.h"
-#include "entities/battleentity.h"
-#include "entities/charentity.h"
-#include "entities/mobentity.h"
+#include "entities/base_entity.h"
+#include "entities/battle_entity.h"
+#include "entities/char_entity.h"
+#include "entities/mob_entity.h"
 #include "packets/s2c/0x038_schedulor.h"
 #include "states/ability_state.h"
 #include "states/attack_state.h"
@@ -139,10 +139,9 @@ bool CAIContainer::Ability(uint16 targid, uint16 abilityid)
 
 bool CAIContainer::RangedAttack(uint16 targid)
 {
-    auto* PlayerController = dynamic_cast<CPlayerController*>(Controller.get());
-    if (PlayerController)
+    if (Controller)
     {
-        return PlayerController->RangedAttack(targid);
+        return Controller->RangedAttack(targid);
     }
     return false;
 }

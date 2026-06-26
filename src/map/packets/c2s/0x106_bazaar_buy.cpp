@@ -23,7 +23,7 @@
 
 #include <limits>
 
-#include "entities/charentity.h"
+#include "entities/char_entity.h"
 #include "packets/s2c/0x01d_item_same.h"
 #include "packets/s2c/0x020_item_attr.h"
 #include "packets/s2c/0x105_bazaar_list.h"
@@ -37,7 +37,8 @@
 auto GP_CLI_COMMAND_BAZAAR_BUY::validate(MapSession* PSession, const CCharEntity* PChar) const -> PacketValidationResult
 {
     // TODO: Short-circuit PV so we can bring all the other checks into this function
-    return PacketValidator()
+    return PacketValidator(PChar)
+        .blockedBy({ BlockedState::InEvent })
         .range("BuyNum", this->BuyNum, 1, 99);
 }
 
@@ -122,16 +123,17 @@ void GP_CLI_COMMAND_BAZAAR_BUY::process(MapSession* PSession, CCharEntity* PChar
             return;
         }
 
-        CItem* PItem = itemutils::GetItem(PBazaarItem);
+        auto PItemOwn = xi::items::clone(*PBazaarItem);
+        PItemOwn->setCharPrice(0);
+        PItemOwn->setQuantity(this->BuyNum);
+        PItemOwn->setSubType(ITEM_UNLOCKED);
 
-        PItem->setCharPrice(0);
-        PItem->setQuantity(this->BuyNum);
-        PItem->setSubType(ITEM_UNLOCKED);
-
-        if (charutils::AddItem(PChar, LOC_INVENTORY, PItem) == ERROR_SLOTID)
+        const uint8 newSlotID = charutils::AddItem(PChar, LOC_INVENTORY, std::move(PItemOwn));
+        if (newSlotID == ERROR_SLOTID)
         {
             return;
         }
+        CItem* PItem = PBuyerInventory->GetItem(newSlotID);
 
         if (settings::get<bool>("map.AUDIT_PLAYER_BAZAAR"))
         {

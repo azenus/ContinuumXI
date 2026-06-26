@@ -23,7 +23,8 @@ entity.phList =
     [ID.mob.NAHYA_FLOODMAKER - 5] = ID.mob.NAHYA_FLOODMAKER, -- Vanguard_Protector
 }
 
-entity.onMobDeath = function(mob, player, optParams)
+entity.onMobSpawn = function(mob)
+    xi.dynamis.mobInfo(mob)
 end
 
 return entity

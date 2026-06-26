@@ -23,7 +23,8 @@ entity.phList =
     [ID.mob.COUNT_VINE - 1] = ID.mob.COUNT_VINE, -- Kindred_Samurai
 }
 
-entity.onMobDeath = function(mob, player, optParams)
+entity.onMobSpawn = function(mob)
+    xi.dynamis.mobInfo(mob)
 end
 
 return entity

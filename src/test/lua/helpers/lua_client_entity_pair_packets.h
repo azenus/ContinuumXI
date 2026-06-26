@@ -22,17 +22,21 @@
 #pragma once
 
 #include "common/cbasetypes.h"
+#include "packets/basic.h"
+
 #include <memory>
 #include <sol/sol.hpp>
 
 enum class PacketC2S : uint16_t;
-class CBasicPacket;
 class CLuaClientEntityPair;
 class CLuaClientEntityPairPackets
 {
 public:
     CLuaClientEntityPairPackets(CLuaClientEntityPair* parent);
     ~CLuaClientEntityPairPackets() = default;
+
+    template <typename T>
+    auto createPacket() -> std::unique_ptr<CBasicPacket>;
 
     auto createPacket(PacketC2S packetType) -> std::unique_ptr<CBasicPacket>;
     void sendBasicPacket(CBasicPacket& packet) const;
@@ -42,6 +46,7 @@ public:
     void parseIncoming();
     auto getIncoming() const -> sol::table;
     auto actionPackets() const -> sol::table;
+    auto guildList(uint16 packetId) const -> sol::table;
     void clear() const;
 
     static void Register();
@@ -50,3 +55,11 @@ private:
     CLuaClientEntityPair* parent_;
     uint8                 sequenceNum_{ 0 };
 };
+
+template <typename T>
+auto CLuaClientEntityPairPackets::createPacket() -> std::unique_ptr<CBasicPacket>
+{
+    auto packet = createPacket(T::packetId);
+    packet->setSize(sizeof(T));
+    return packet;
+}

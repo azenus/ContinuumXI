@@ -26,7 +26,7 @@
 #include <common/tracy.h>
 #include <common/zlib.h>
 
-#include "entities/charentity.h"
+#include "entities/char_entity.h"
 
 #include "packets/basic.h"
 #include "packets/s2c/0x00b_logout.h"
@@ -37,9 +37,8 @@
 #include "job_points.h"
 #include "latent_effect_container.h"
 #include "map_engine.h"
+#include "map_session.h"
 #include "map_statistics.h"
-#include "packet_guard.h"
-#include "packet_system.h"
 #include "roe.h"
 #include "status_effect_container.h"
 #include "transport.h"
@@ -52,6 +51,7 @@ MapNetworking::MapNetworking(Scheduler& scheduler, MapStatistics& mapStatistics,
 : scheduler_(scheduler)
 , mapStatistics_(mapStatistics)
 , mapIPP_(config.ipp) // TODO: Refactor to not use this, since we have config_ in here
+, mapSessions_(scheduler)
 , config_(config)
 , PBuff{}
 , PBuffCopy{}
@@ -69,7 +69,7 @@ MapNetworking::MapNetworking(Scheduler& scheduler, MapStatistics& mapStatistics,
     try
     {
         const auto udpPort = mapIPP_.getPort() == 0 ? settings::get<uint16>("network.MAP_PORT") : mapIPP_.getPort();
-        mapSocket_         = std::make_unique<MapSocket>(scheduler_, udpPort, std::bind(&MapNetworking::handle_incoming_packet, this, std::placeholders::_1, std::placeholders::_2));
+        socket_            = std::make_unique<MapSocket>(scheduler_, udpPort, std::bind(&MapNetworking::handle_incoming_packet, this, std::placeholders::_1, std::placeholders::_2));
     }
     catch (const std::exception& e)
     {
@@ -151,7 +151,7 @@ void MapNetworking::handle_incoming_packet(ByteSpan buffer, const IPP& ipp)
             PSession->server_packet_id += 1;
         }
 
-        mapSocket_->send(ipp, { PBuff.data(), size });
+        socket_->send(ipp, { PBuff.data(), size });
 
         std::swap(PBuff, PSession->server_packet_data);
         std::swap(size, PSession->server_packet_size);
@@ -169,7 +169,6 @@ int32 MapNetworking::map_decipher_packet(uint8* buff, size_t buffsize, MapSessio
     TracyZoneScoped;
 
     uint16 tmp = 0;
-    uint16 i   = 0;
 
     // counting blocks whose size = 4 byte
     tmp = (uint16)((buffsize - FFXI_HEADER_SIZE) / 4);
@@ -177,10 +176,8 @@ int32 MapNetworking::map_decipher_packet(uint8* buff, size_t buffsize, MapSessio
 
     const auto ip = PSession->client_ipp.getIP();
 
-    for (i = 0; i < tmp; i += 2)
-    {
-        blowfish_decipher((uint32*)buff + i + 7, (uint32*)buff + i + 8, pbfkey->P, pbfkey->S[0]);
-    }
+    // tmp is an even count of 4-byte words, i.e. 2 words (one 64-bit block) per cipher step.
+    blowfish_decipher_blocks((uint32*)buff + 7, tmp / 2, pbfkey->P, pbfkey->S[0]);
 
     if (checksum((uint8*)(buff + FFXI_HEADER_SIZE), (uint32)(buffsize - (FFXI_HEADER_SIZE + 16)), (char*)(buff + buffsize - 16)) == 0)
     {
@@ -267,7 +264,6 @@ int32 MapNetworking::recv_parse(uint8* buff, size_t* buffsize, MapSession* PSess
                     // TODO: err msg?
                     return -1;
                 }
-                PSession->scheduler = &scheduler_;
             }
             else
             {
@@ -289,17 +285,10 @@ int32 MapNetworking::recv_parse(uint8* buff, size_t* buffsize, MapSession* PSess
 
             std::ignore = langID;
 
-            auto rset = db::preparedStmt("SELECT charid FROM chars WHERE charid = ? LIMIT 1", packetCharID);
+            auto rset = db::preparedStmt("SELECT accid FROM chars WHERE charid = ? LIMIT 1", packetCharID);
             if (!rset || rset->rowsCount() == 0 || !rset->next())
             {
-                ShowError("recv_parse: Cannot load charid %u", packetCharID);
-                return -1;
-            }
-
-            rset = db::preparedStmt("SELECT accid FROM chars WHERE charid = ? LIMIT 1", packetCharID);
-            if (!rset || rset->rowsCount() == 0 || !rset->next())
-            {
-                ShowError("recv_parse: Cannot load account id for char id %u", packetCharID);
+                ShowError("recv_parse: Cannot load char %u (no such charid)", packetCharID);
                 return -1;
             }
 
@@ -423,67 +412,36 @@ int32 MapNetworking::parse(uint8* buff, size_t* buffsize, MapSession* PSession)
         SmallPD_Size = (ref<uint8>(SmallPD_ptr, 1) & 0x0FE);
         SmallPD_Type = (ref<uint16>(SmallPD_ptr, 0) & 0x1FF);
 
-        if (PacketSize[SmallPD_Type] == SmallPD_Size || PacketSize[SmallPD_Type] == 0) // Tests incoming packets for the correct size prior to processing
+        if ((ref<uint16>(SmallPD_ptr, 2) <= PSession->client_packet_id) || (ref<uint16>(SmallPD_ptr, 2) > SmallPD_Code))
         {
-            // Google Translate:
-            // if the code of the current package is less than or equal to the last received
-            // or more global then ignore the package
+            continue;
+        }
 
-            if ((ref<uint16>(SmallPD_ptr, 2) <= PSession->client_packet_id) || (ref<uint16>(SmallPD_ptr, 2) > SmallPD_Code))
-            {
-                continue;
-            }
+        if (SmallPD_Type != static_cast<uint16>(PacketC2S::GP_CLI_COMMAND_POS))
+        {
+            DebugPackets("parse: %03hX | %04hX %04hX %02hX from user: %s",
+                         SmallPD_Type,
+                         ref<uint16>(SmallPD_ptr, 2),
+                         ref<uint16>(buff, 2),
+                         SmallPD_Size,
+                         PChar->getName());
+        }
 
-            if (SmallPD_Type != 0x15)
+        if (PChar->loc.zone == nullptr && SmallPD_Type != static_cast<uint16>(PacketC2S::GP_CLI_COMMAND_LOGIN))
+        {
+            // Packets aren't unexpected from the old key under BLOWFISH_PENDING_ZONE
+            if (PSession->blowfish.status != BLOWFISH_PENDING_ZONE)
             {
-                DebugPackets("parse: %03hX | %04hX %04hX %02hX from user: %s",
-                             SmallPD_Type,
-                             ref<uint16>(SmallPD_ptr, 2),
-                             ref<uint16>(buff, 2),
-                             SmallPD_Size,
-                             PChar->getName());
-            }
-
-            if (settings::get<bool>("map.PACKETGUARD_ENABLED") && PacketGuard::IsRateLimitedPacket(PChar, SmallPD_Type))
-            {
-                ShowWarning("[PacketGuard] Rate-limiting packet: Player: %s - Packet: %03hX", PChar->getName(), SmallPD_Type);
-                continue; // skip this packet
-            }
-
-            if (settings::get<bool>("map.PACKETGUARD_ENABLED") && !PacketGuard::PacketIsValidForPlayerState(PChar, SmallPD_Type))
-            {
-                ShowWarning("[PacketGuard] Caught mismatch between player substate and recieved packet: Player: %s - Packet: %03hX",
-                            PChar->getName(),
-                            SmallPD_Type);
-                continue; // skip this packet
-            }
-
-            if (settings::get<bool>("map.PACKETGUARD_ENABLED") && !PacketGuard::PacketsArrivingInCorrectOrder(PChar, SmallPD_Type))
-            {
-                ShowWarning("[PacketGuard] Caught out-of-order packet: Player: %s - Packet: %03hX", PChar->getName(), SmallPD_Type);
-                continue; // skip this packet
-            }
-
-            if (PChar->loc.zone == nullptr && SmallPD_Type != 0x0A)
-            {
-                // Packets aren't unexpected from the old key under BLOWFISH_PENDING_ZONE
-                if (PSession->blowfish.status != BLOWFISH_PENDING_ZONE)
-                {
-                    ShowWarning("This packet is unexpected from %s - Received %03hX earlier without matching 0x0A", PChar->getName(), SmallPD_Type);
-                }
-            }
-            else
-            {
-                // TODO: We should be passing a non-modifyable span of the packet data into the parser
-                //     : instead of creating a new packet here.
-                auto basicPacket = CBasicPacket::createFromBuffer(reinterpret_cast<uint8*>(SmallPD_ptr));
-                ShowTraceFmt("map::parse: Char: {} ({}): {}", PChar->getName(), PChar->id, hex16ToString(basicPacket->getType()));
-                PacketParser[SmallPD_Type](PSession, PChar, *basicPacket);
+                ShowWarning("This packet is unexpected from %s - Received %03hX earlier without matching 0x0A", PChar->getName(), SmallPD_Type);
             }
         }
         else
         {
-            ShowWarning("Bad packet size %03hX | %04hX %04hX %02hX from user: %s", SmallPD_Type, ref<uint16>(SmallPD_ptr, 2), ref<uint16>(buff, 2), SmallPD_Size, PChar->getName());
+            // Reuse one CBasicPacket (parseScratchPacket_) across the loop instead of re-allocating per inbound packet.
+            // We're copying in and bounding only exactly what we want, so it's safe.
+            std::memcpy(&parseScratchPacket_.ref<uint8>(0), SmallPD_ptr, PACKET_SIZE);
+            ShowTraceFmt("map::parse: Char: {} ({}): {}", PChar->getName(), PChar->id, hex16ToString(parseScratchPacket_.getType()));
+            packetSystem_.dispatch(SmallPD_Type, PSession, PChar, parseScratchPacket_);
         }
     }
 
@@ -491,7 +449,7 @@ int32 MapNetworking::parse(uint8* buff, size_t* buffsize, MapSession* PSession)
     {
         for (uint8 equipSlotID = 0; equipSlotID < 16; ++equipSlotID)
         {
-            if (PChar->equip[equipSlotID] != 0)
+            if (PChar->getEquip(static_cast<SLOTTYPE>(equipSlotID)))
             {
                 PChar->PLatentEffectContainer->CheckLatentsEquip(equipSlotID);
             }
@@ -512,7 +470,7 @@ int32 MapNetworking::parse(uint8* buff, size_t* buffsize, MapSession* PSession)
     {
         // If the client and server have become out of sync, then caching takes place. However, caching
         // zone packets will result in the client never properly connecting. Ignore those specifically.
-        if (SmallPD_Type == 0x0A)
+        if (SmallPD_Type == static_cast<uint16>(PacketC2S::GP_CLI_COMMAND_LOGIN))
         {
             return 0;
         }
@@ -553,10 +511,6 @@ int32 MapNetworking::send_parse(uint8* buff, size_t* buffsize, MapSession* PSess
     bool   incrementKeyAfterEncrypt = false;
 
     mapStatistics_.increment(MapStatistics::Key::TotalPacketsToSendPerTick, static_cast<uint32>(PChar->getPacketCount()));
-
-#ifdef LOG_OUTGOING_PACKETS
-    PacketGuard::PrintPacketList(PChar);
-#endif
 
     do
     {
@@ -736,7 +690,7 @@ void MapNetworking::finalizePacket(uint8* buff, size_t* buffsize, size_t PacketS
     // Making total outgoing packet
     std::memcpy(buff + FFXI_HEADER_SIZE, PScratchBuffer.data(), PacketSize);
 
-    uint32 CypherSize = (PacketSize / 4) & -2;
+    uint32 cypherSize = (PacketSize / 4) & -2;
 
     blowfish_t* pbfkey = nullptr;
 
@@ -749,10 +703,8 @@ void MapNetworking::finalizePacket(uint8* buff, size_t* buffsize, size_t PacketS
         pbfkey = &PSession->blowfish;
     }
 
-    for (uint32 j = 0; j < CypherSize; j += 2)
-    {
-        blowfish_encipher((uint32*)(buff) + j + 7, (uint32*)(buff) + j + 8, pbfkey->P, pbfkey->S[0]);
-    }
+    // cypherSize is an even count of 4-byte words, i.e. 2 words (one 64-bit block) per cipher step.
+    blowfish_encipher_blocks((uint32*)(buff) + 7, cypherSize / 2, pbfkey->P, pbfkey->S[0]);
 
     *buffsize = PacketSize + FFXI_HEADER_SIZE;
 }
@@ -809,7 +761,12 @@ auto MapNetworking::scheduler() -> Scheduler&
     return scheduler_;
 }
 
-auto MapNetworking::socket() -> MapSocket&
+auto MapNetworking::socket() -> Socket&
 {
-    return *mapSocket_;
+    return *socket_;
+}
+
+auto MapNetworking::packetSystem() -> PacketSystem&
+{
+    return packetSystem_;
 }

@@ -23,7 +23,8 @@ entity.phList =
     [ID.mob.MARQUIS_SABNAK - 1] = ID.mob.MARQUIS_SABNAK, -- Kindred_Paladin
 }
 
-entity.onMobDeath = function(mob, player, optParams)
+entity.onMobSpawn = function(mob)
+    xi.dynamis.mobInfo(mob)
 end
 
 return entity

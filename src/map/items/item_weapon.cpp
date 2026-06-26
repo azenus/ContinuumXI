@@ -18,12 +18,13 @@
 
 ===========================================================================
 */
-#include "entities/battleentity.h"
+
+#include "item_weapon.h"
+
+#include "entities/battle_entity.h"
 #include "utils/battleutils.h"
 #include "utils/charutils.h"
 #include "utils/itemutils.h"
-
-#include "item_weapon.h"
 
 /************************************************************************
  *                                                                       *
@@ -43,7 +44,7 @@ CItemWeapon::CItemWeapon(uint16 id)
     m_iLvlMacc       = 0;
     m_damage         = 0;
     m_effect         = 0;
-    m_dmgType        = DAMAGE_TYPE::NONE;
+    m_dmgType        = xi::DamageType::None;
     m_delay          = 8000;
     m_baseDelay      = 8000; // this should only be needed for mobs (specifically mnks)
     m_maxHit         = 0;
@@ -51,6 +52,26 @@ CItemWeapon::CItemWeapon(uint16 id)
     m_ranged         = false;
     m_twoHanded      = false;
     m_wsunlockpoints = 0;
+}
+
+CItemWeapon::CItemWeapon(const CItemWeapon& other)
+: CItemEquipment(other)
+, m_skillType(other.m_skillType)
+, m_subSkillType(other.m_subSkillType)
+, m_iLvlSkill(other.m_iLvlSkill)
+, m_iLvlParry(other.m_iLvlParry)
+, m_iLvlMacc(other.m_iLvlMacc)
+, m_damage(other.m_damage)
+, m_delay(other.m_delay)
+, m_baseDelay(other.m_baseDelay)
+, m_dmgType(other.m_dmgType)
+, m_effect(other.m_effect)
+, m_maxHit(other.m_maxHit)
+, m_DPS(other.m_DPS)
+, m_wsunlockpoints(other.m_wsunlockpoints)
+, m_ranged(other.m_ranged)
+, m_twoHanded(other.m_twoHanded)
+{
 }
 
 CItemWeapon::~CItemWeapon() = default;
@@ -63,7 +84,7 @@ CItemWeapon::~CItemWeapon() = default;
 
 void CItemWeapon::resetDelay()
 {
-    setDelay(getBaseDelay());
+    m_delay = m_baseDelay;
 }
 
 /************************************************************************
@@ -298,15 +319,14 @@ uint16 CItemWeapon::getILvlMacc() const
 
 /************************************************************************
  *                                                                      *
- * Set the weapon delay time. Value in milliseconds.                    *
- * All math operations are performed with integers which is why         *
- * the order of operations is important                                 *
+ * Set the weapon delay time. Value in raw game delay units.            *
+ * Converts to milliseconds: delay * 1000 / 60.                         *
  *                                                                      *
  ************************************************************************/
 
 void CItemWeapon::setDelay(uint16 delay)
 {
-    m_delay = delay;
+    m_delay = uint16(delay * 1000.0f / 60.0f);
 }
 
 /************************************************************************
@@ -324,27 +344,25 @@ uint16 CItemWeapon::getDelay() const
 
 /************************************************************************
  *                                                                      *
- *  Set the un-adjusted delay of the weapon                             *
- *  This is to fix delay adjustments of mobs and is not intended for    *
- *  use outside of zoneutils/mobutils                                   *
+ *  Set the un-adjusted delay of the weapon. Value in raw game units.  *
+ *  Converts to milliseconds: delay * 1000 / 60.                       *
  *                                                                      *
  ************************************************************************/
 
 void CItemWeapon::setBaseDelay(uint16 delay)
 {
-    m_baseDelay = delay;
+    m_baseDelay = uint16(delay * 1000.0f / 60.0f);
 }
 
 /************************************************************************
  *                                                                       *
- * get un-adjusted or adjusted base delay of weapon.                     *
- * Player weapons are unadjusted, "fake" mob/trust weapons are adjusted. *
+ * Get the un-adjusted base delay of the weapon. Value in raw game units.*
  *                                                                       *
  ************************************************************************/
 
 uint16 CItemWeapon::getBaseDelay() const
 {
-    return m_baseDelay;
+    return uint16(m_baseDelay * 60.0f / 1000.0f);
 }
 
 /************************************************************************
@@ -364,7 +382,7 @@ uint16 CItemWeapon::getTotalUnlockPointsNeeded() const
  *                                                                       *
  ************************************************************************/
 
-auto CItemWeapon::getCurrentUnlockPoints() -> uint16
+auto CItemWeapon::getCurrentUnlockPoints() const -> uint16
 {
     return this->exdata<Exdata::WeaponUnlock>().UnlockPoints;
 }
@@ -410,7 +428,7 @@ uint16 CItemWeapon::getDamage() const
  *                                                                       *
  ************************************************************************/
 
-void CItemWeapon::setDmgType(DAMAGE_TYPE dmgType)
+void CItemWeapon::setDmgType(xi::DamageType dmgType)
 {
     m_dmgType = dmgType;
 }
@@ -421,7 +439,7 @@ void CItemWeapon::setDmgType(DAMAGE_TYPE dmgType)
  *                                                                       *
  ************************************************************************/
 
-DAMAGE_TYPE CItemWeapon::getDmgType()
+auto CItemWeapon::getDmgType() -> xi::DamageType
 {
     return m_dmgType;
 }

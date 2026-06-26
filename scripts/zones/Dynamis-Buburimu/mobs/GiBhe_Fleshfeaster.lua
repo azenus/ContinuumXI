@@ -23,7 +23,8 @@ entity.phList =
     [ID.mob.GIBHE_FLESHFEASTER - 10] = ID.mob.GIBHE_FLESHFEASTER, -- Vanguard_Constable
 }
 
-entity.onMobDeath = function(mob, player, optParams)
+entity.onMobSpawn = function(mob)
+    xi.dynamis.mobInfo(mob)
 end
 
 return entity

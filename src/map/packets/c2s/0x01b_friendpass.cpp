@@ -21,19 +21,20 @@
 
 #include "0x01b_friendpass.h"
 
-#include "entities/charentity.h"
+#include "entities/char_entity.h"
 #include "packets/s2c/0x059_friendpass.h"
 
 auto GP_CLI_COMMAND_FRIENDPASS::validate(MapSession* PSession, const CCharEntity* PChar) const -> PacketValidationResult
 {
     // Not implemented.
-    return PacketValidator()
-        .oneOf<GP_CLI_COMMAND_FRIENDPASS_PARA>(Para);
+    return PacketValidator(PChar)
+        .blockedBy({ BlockedState::InEvent })
+        .oneOf<GP_CLI_COMMAND_FRIENDPASS_PARA>(this->Para);
 }
 
 void GP_CLI_COMMAND_FRIENDPASS::process(MapSession* PSession, CCharEntity* PChar) const
 {
-    switch (static_cast<GP_CLI_COMMAND_FRIENDPASS_PARA>(Para))
+    switch (static_cast<GP_CLI_COMMAND_FRIENDPASS_PARA>(this->Para))
     {
         case GP_CLI_COMMAND_FRIENDPASS_PARA::BeginPurchase:
             break;
@@ -45,5 +46,5 @@ void GP_CLI_COMMAND_FRIENDPASS::process(MapSession* PSession, CCharEntity* PChar
             break;
     }
 
-    PChar->pushPacket<GP_SERV_COMMAND_FRIENDPASS>(Para & 1 ? static_cast<uint32>(xirand::GetRandomNumber(9999999999)) : 0);
+    PChar->pushPacket<GP_SERV_COMMAND_FRIENDPASS>(this->Para & 1 ? static_cast<uint32>(xirand::GetRandomNumber(9999999999)) : 0);
 }

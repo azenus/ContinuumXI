@@ -21,11 +21,12 @@
 
 #include "0x0d3_faq_gmcall.h"
 
-#include "entities/charentity.h"
+#include "entities/char_entity.h"
 
 auto GP_CLI_COMMAND_FAQ_GMCALL::validate(MapSession* PSession, const CCharEntity* PChar) const -> PacketValidationResult
 {
-    return PacketValidator()
+    return PacketValidator(PChar)
+        .blockedBy({ BlockedState::InEvent })
         .oneOf<GP_CLI_COMMAND_FAQ_GMCALL_TYPE>(this->type)
         .mustEqual(this->vers, 0, "vers not equal to 0")
         .range("eos", this->eos, 0, 1);

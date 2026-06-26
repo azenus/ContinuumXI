@@ -1,4 +1,4 @@
-/*
+﻿/*
 ===========================================================================
 
   Copyright (c) 2025 LandSandBoat Dev Teams
@@ -26,7 +26,7 @@
 #include "common/database.h"
 #include "common/ipc_structs.h"
 #include "common/settings.h"
-#include "entities/charentity.h"
+#include "entities/char_entity.h"
 #include "ipc_client.h"
 #include "linkshell.h"
 #include "packets/s2c/0x009_message.h"
@@ -63,9 +63,9 @@ const auto auditUnity = [](Scheduler& scheduler, CCharEntity* PChar, const std::
 {
     if (settings::get<bool>("map.AUDIT_CHAT") && settings::get<uint8>("map.AUDIT_UNITY"))
     {
-        const auto name        = PChar->getName();
-        const auto zoneId      = PChar->getZone();
-        const auto unityLeader = PChar->PUnityChat->getLeader();
+        const auto& name        = PChar->getName();
+        const auto  zoneId      = PChar->getZone();
+        const auto  unityLeader = PChar->PUnityChat->getLeader();
 
         scheduler.postToWorkerThread(
             [name, zoneId, unityLeader, rawMessage]()
@@ -104,8 +104,8 @@ const auto auditLinkshell = [](Scheduler& scheduler, CCharEntity* PChar, CLinksh
 
 auto GP_CLI_COMMAND_CHAT_STD::validate(MapSession* PSession, const CCharEntity* PChar) const -> PacketValidationResult
 {
-    return PacketValidator()
-        .oneOf<GP_CLI_COMMAND_CHAT_STD_KIND>(Kind);
+    return PacketValidator(PChar)
+        .oneOf<GP_CLI_COMMAND_CHAT_STD_KIND>(this->Kind);
 }
 
 void GP_CLI_COMMAND_CHAT_STD::process(MapSession* PSession, CCharEntity* PChar) const
@@ -113,8 +113,8 @@ void GP_CLI_COMMAND_CHAT_STD::process(MapSession* PSession, CCharEntity* PChar) 
     // Extremely important to figure out the message length here.
     // Depending on alignment, the message may not be NULL-terminated.
     // Start with reported size and skip the first 6 bytes (4x header + 1x kind + 1x unknown).
-    const auto messageLength              = std::min<std::size_t>((header.size * 4) - 0x6, sizeof(Str));
-    const auto rawMessage                 = asStringFromUntrustedSource(Str, messageLength);
+    const auto messageLength              = std::min<std::size_t>((header.size * 4) - 0x6, sizeof(this->Str));
+    const auto rawMessage                 = asStringFromUntrustedSource(this->Str, messageLength);
     const auto firstChar                  = rawMessage[0];
     const auto rawMessageWithoutFirstChar = rawMessage.substr(1);
 
@@ -122,7 +122,9 @@ void GP_CLI_COMMAND_CHAT_STD::process(MapSession* PSession, CCharEntity* PChar) 
     if (firstChar == '!' && !jailutils::InPrison(PChar))
     {
         // TODO: Don't pass around Scheduler& through PSession
-        if (CCommandHandler::call(*PSession->scheduler, lua, PChar, rawMessageWithoutFirstChar) == 0 || PChar->m_GMlevel > 0)
+        auto& scheduler = *PSession->scheduler;
+        if (CCommandHandler::call(scheduler, lua, PChar, rawMessageWithoutFirstChar) == CommandResult::Success ||
+            PChar->m_GMlevel > 0)
         {
             // A command was handled OR a GM may have mistyped.
             return;
@@ -146,7 +148,7 @@ void GP_CLI_COMMAND_CHAT_STD::process(MapSession* PSession, CCharEntity* PChar) 
     // If you're jailed, you can only use /say
     if (jailutils::InPrison(PChar))
     {
-        if (Kind == static_cast<uint8_t>(GP_CLI_COMMAND_CHAT_STD_KIND::Say))
+        if (this->Kind == static_cast<uint8_t>(GP_CLI_COMMAND_CHAT_STD_KIND::Say))
         {
             // TODO: Don't pass around Scheduler& through PSession
             auditChat(*PSession->scheduler, PChar, "SAY", rawMessage);
@@ -161,7 +163,7 @@ void GP_CLI_COMMAND_CHAT_STD::process(MapSession* PSession, CCharEntity* PChar) 
     }
 
     // Now handle every other chat type
-    switch (static_cast<GP_CLI_COMMAND_CHAT_STD_KIND>(Kind))
+    switch (static_cast<GP_CLI_COMMAND_CHAT_STD_KIND>(this->Kind))
     {
         case GP_CLI_COMMAND_CHAT_STD_KIND::Say:
         {

@@ -23,7 +23,8 @@ entity.phList =
     [ID.mob.GIBBEROX_PIMPLEBEAK - 1] = ID.mob.GIBBEROX_PIMPLEBEAK, -- Vanguard_Enchanter
 }
 
-entity.onMobDeath = function(mob, player, optParams)
+entity.onMobSpawn = function(mob)
+    xi.dynamis.mobInfo(mob)
 end
 
 return entity

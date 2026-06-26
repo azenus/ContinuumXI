@@ -138,6 +138,8 @@ enum ITEMID : uint16
     DREAM_BELL_P1                  = 18864,
     LADY_BELL                      = 18868,
     LADY_BELL_P1                   = 18869,
+    LU_SHANGS_FISHING_ROD_P1       = 19320,
+    EBISU_FISHING_ROD_P1           = 19321,
     MARVELOUS_CHEER                = 22283,
     JOINERS_ASPIS                  = 26423,
     CHEFS_SHIELD                   = 26461,
@@ -145,5 +147,6 @@ enum ITEMID : uint16
     MAZE_TABULA_M03                = 28674,
     MAZE_TABULA_R01                = 28704,
     MAZE_TABULA_R03                = 28706,
+    MANGLED_MESS                   = 29695,
     GIL                            = 65535,
 };

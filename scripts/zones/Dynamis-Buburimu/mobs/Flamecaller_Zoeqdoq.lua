@@ -23,7 +23,8 @@ entity.phList =
     [ID.mob.FLAMECALLER_ZOEQDOQ - 12] = ID.mob.FLAMECALLER_ZOEQDOQ, -- Vanguard_Mesmerizer
 }
 
-entity.onMobDeath = function(mob, player, optParams)
+entity.onMobSpawn = function(mob)
+    xi.dynamis.mobInfo(mob)
 end
 
 return entity

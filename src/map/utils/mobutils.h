@@ -24,7 +24,7 @@
 #include <unordered_map>
 
 #include "common/cbasetypes.h"
-#include "entities/mobentity.h"
+#include "entities/mob_entity.h"
 #include "modifier.h"
 
 struct ModsList_t
@@ -57,15 +57,13 @@ void SetupJob(CMobEntity* PMob);
 void SetupRoaming(CMobEntity* PMob);
 void SetupDynamisMob(CMobEntity* PMob);
 void SetupBattlefieldMob(CMobEntity* PMob);
-void SetupDungeonMob(CMobEntity* PMob);
 void SetupEventMob(CMobEntity* PMob);
-void SetupNMMob(CMobEntity* PMob);
 void SetupDungeonInstanceMob(CMobEntity* PMob);
 void SetupPetSkills(CMobEntity* PMob);
 
 uint8 JobSkillRankToBaseEvaRank(JOBTYPE mjob, JOBTYPE sjob);
 
-uint16 GetWeaponDamage(CMobEntity* PMob, uint16 slot);
+uint16 GetBaseWeaponDamage(CMobEntity* PMob, uint16 slot);
 uint16 GetMagicEvasion(CMobEntity* PMob);
 uint16 GetBaseDefEva(CMobEntity* PMob, uint8 rank);
 uint16 GetBaseSkill(CMobEntity* PMob, uint8 rank);
@@ -76,8 +74,8 @@ void   InitializeMob(CMobEntity* PMob);
 void   LoadSqlModifiers();
 void   Cleanup();
 
-// get modifiers for pool / family / spawn
-ModsList_t* GetMobFamilyMods(uint16 familyId, bool create = false);
+// get modifiers for species / pool / spawn
+ModsList_t* GetMobSpeciesMods(uint16 speciesId, bool create = false);
 ModsList_t* GetMobPoolMods(uint32 poolId, bool create = false);
 ModsList_t* GetMobSpawnMods(uint32 mobId, bool create = false);
 

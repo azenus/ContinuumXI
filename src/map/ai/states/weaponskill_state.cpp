@@ -23,12 +23,13 @@
 
 #include "action/action.h"
 #include "ai/ai_container.h"
-#include "entities/battleentity.h"
+#include "entities/battle_entity.h"
 #include "packets/s2c/0x028_battle2.h"
 #include "packets/s2c/0x029_battle_message.h"
 #include "roe.h"
 #include "status_effect_container.h"
 #include "utils/battleutils.h"
+#include "utils/zoneutils.h"
 #include "weapon_skill.h"
 
 CWeaponSkillState::CWeaponSkillState(CBattleEntity* PEntity, uint16 targid, uint16 wsid)
@@ -56,7 +57,7 @@ CWeaponSkillState::CWeaponSkillState(CBattleEntity* PEntity, uint16 targid, uint
         }
     }
 
-    if (!m_PEntity->CanSeeTarget(PTarget, false))
+    if (!m_PEntity->CanSeeTarget(PTarget))
     {
         throw CStateInitException(std::make_unique<GP_SERV_COMMAND_BATTLE_MESSAGE>(m_PEntity, PTarget, 0, 0, MsgBasic::CannotPerformAction));
     }
@@ -69,11 +70,11 @@ CWeaponSkillState::CWeaponSkillState(CBattleEntity* PEntity, uint16 targid, uint
         .actionid   = static_cast<uint32_t>(FourCC::SkillUse),
         .targets    = {
             {
-                   .actorId = PTarget->id,
-                   .results = {
+                .actorId = PTarget->id,
+                .results = {
                     {
-                           .param     = m_PSkill->getID(),
-                           .messageID = MsgBasic::ReadiesWeaponskill,
+                        .param     = m_PSkill->getID(),
+                        .messageID = MsgBasic::ReadiesWeaponskill,
                     },
                 },
             },
@@ -91,14 +92,14 @@ CWeaponSkill* CWeaponSkillState::GetSkill()
 void CWeaponSkillState::SpendCost()
 {
     auto tp = 0;
-    if (m_PEntity->StatusEffectContainer->HasStatusEffect(EFFECT_MEIKYO_SHISUI))
+    if (m_PEntity->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::MeikyoShisui))
     {
         tp = m_PEntity->addTP(-1000);
     }
-    else if (m_PEntity->StatusEffectContainer->HasStatusEffect(EFFECT_SEKKANOKI))
+    else if (m_PEntity->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Sekkanoki))
     {
         tp = m_PEntity->addTP(-1000);
-        m_PEntity->StatusEffectContainer->DelStatusEffect(EFFECT_SEKKANOKI);
+        m_PEntity->StatusEffectContainer->DelStatusEffect(xi::StatusEffect::Sekkanoki);
     }
     else
     {
@@ -143,11 +144,11 @@ bool CWeaponSkillState::Update(timer::time_point tick)
             }
 
             // Reset Restraint bonus and trackers on weaponskill use
-            if (m_PEntity->StatusEffectContainer->HasStatusEffect(EFFECT_RESTRAINT))
+            if (m_PEntity->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Restraint))
             {
-                uint16 WSBonus = m_PEntity->StatusEffectContainer->GetStatusEffect(EFFECT_RESTRAINT)->GetPower();
-                m_PEntity->StatusEffectContainer->GetStatusEffect(EFFECT_RESTRAINT)->SetPower(0);
-                m_PEntity->StatusEffectContainer->GetStatusEffect(EFFECT_RESTRAINT)->SetSubPower(0);
+                uint16 WSBonus = m_PEntity->StatusEffectContainer->GetStatusEffect(xi::StatusEffect::Restraint)->GetPower();
+                m_PEntity->StatusEffectContainer->GetStatusEffect(xi::StatusEffect::Restraint)->SetPower(0);
+                m_PEntity->StatusEffectContainer->GetStatusEffect(xi::StatusEffect::Restraint)->SetSubPower(0);
                 m_PEntity->delModifier(Mod::ALL_WSDMG_FIRST_HIT, WSBonus);
             }
 
@@ -158,7 +159,14 @@ bool CWeaponSkillState::Update(timer::time_point tick)
                 uint32 weaponskillDamage = weaponskillVar & 0xFFFFFF;
 
                 m_PEntity->PAI->EventHandler.triggerListener("WEAPONSKILL_USE", m_PEntity, PTarget, m_PSkill.get(), m_spent, &action, weaponskillDamage);
-                PTarget->PAI->EventHandler.triggerListener("WEAPONSKILL_TAKE", m_PEntity, PTarget, m_PSkill.get(), m_spent, &action);
+                for (auto& actionTarget : action.targets)
+                {
+                    auto* PActionTarget = dynamic_cast<CBattleEntity*>(zoneutils::GetEntity(actionTarget.actorId));
+                    if (PActionTarget)
+                    {
+                        PActionTarget->PAI->EventHandler.triggerListener("WEAPONSKILL_TAKE", m_PEntity, PActionTarget, m_PSkill.get(), m_spent, &action);
+                    }
+                }
 
                 if (m_PEntity->objtype == TYPE_PC)
                 {

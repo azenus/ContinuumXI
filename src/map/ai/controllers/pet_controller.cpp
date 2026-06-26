@@ -23,7 +23,7 @@
 
 #include "ai/ai_container.h"
 #include "common/utils.h"
-#include "entities/petentity.h"
+#include "entities/pet_entity.h"
 #include "status_effect_container.h"
 #include "utils/petutils.h"
 
@@ -79,44 +79,67 @@ auto CPetController::Tick(timer::time_point tick) -> Task<void>
     co_await CMobController::Tick(tick);
 }
 
+// Light Spirit is the only elemental spirit that is allowed to cast out of combat.
+auto CPetController::DoBuffTick() -> bool
+{
+    const auto* PPetEntity = dynamic_cast<CPetEntity*>(PPet);
+    if (!PPetEntity || PPetEntity->petID() != PETID_LIGHTSPIRIT)
+    {
+        return false;
+    }
+
+    return CMobController::DoBuffTick();
+}
+
 auto CPetController::DoRoamTick(timer::time_point tick) -> Task<void>
 {
+    TracyZoneScoped;
+
     if ((PPet->PMaster == nullptr || PPet->PMaster->isDead()) && PPet->isAlive() && PPet->objtype != TYPE_MOB)
     {
         PPet->Die();
         co_return;
     }
 
-    // if pet cannot change state (for example because pet is asleep) then just return
+    // If pet cannot change state (for example because pet is asleep) then just return
     if (!PPet->PAI->CanChangeState())
     {
         co_return;
     }
 
-    if (PPet->objtype == TYPE_PET || (PPet->objtype == TYPE_MOB && PPet->PMaster && PPet->PMaster->objtype == TYPE_PC))
+    const auto isPet        = PPet->objtype == TYPE_PET;
+    const auto isCharmedMob = PPet->objtype == TYPE_MOB && PPet->PMaster && PPet->PMaster->objtype == TYPE_PC;
+
+    if (isPet || isCharmedMob)
     {
-        CPetEntity* PetEntity = static_cast<CPetEntity*>(PPet);
-        // automaton, wyvern
-        if (PetEntity->getPetType() == PET_TYPE::WYVERN || PetEntity->getPetType() == PET_TYPE::AUTOMATON)
+        const auto* PPetEntity = dynamic_cast<CPetEntity*>(PPet);
+
+        // A non-CPetEntity is a CMobEntity that has been charmed - a BST pet
+        const auto isBstPet = PPetEntity ? PPetEntity->isBstPet() : true;
+
+        if (PPetEntity != nullptr)
         {
-            if (PetIsHealing())
+            const auto petType             = PPetEntity->getPetType();
+            const auto isWyvernOrAutomaton = petType == PET_TYPE::WYVERN || petType == PET_TYPE::AUTOMATON;
+
+            if (isWyvernOrAutomaton)
+            {
+                if (PetIsHealing())
+                {
+                    co_return;
+                }
+
+                // TODO: Other logic?
+            }
+
+            // Certain pets do not roam
+            if (immobilePets.contains(static_cast<PETID>(PPetEntity->petID())))
             {
                 co_return;
             }
         }
-        else if (PetEntity->isBstPet() && PPet->StatusEffectContainer->GetStatusEffect(EFFECT_HEALING))
-        {
-            co_return;
-        }
-        else if (PetEntity->m_PetID == PETID_LIGHTSPIRIT) // Only Light Spirit will cast on roam tick
-        {
-            // this will respect the pet's mob casting cooldown properties via MOBMOD_MAGIC_COOL
-            if (CMobController::IsSpellReady(0) && CMobController::TryCastSpell())
-            {
-                co_return;
-            }
-        }
-        else if (immobilePets.contains(static_cast<PETID>(PetEntity->m_PetID))) // certain pets do not roam
+
+        if (isBstPet && PPet->StatusEffectContainer->GetStatusEffect(xi::StatusEffect::Healing))
         {
             co_return;
         }
@@ -127,49 +150,53 @@ auto CPetController::DoRoamTick(timer::time_point tick) -> Task<void>
         co_return;
     }
 
-    float currentDistance = distance(PPet->loc.p, PPet->PMaster->loc.p);
+    const float currentDistance = distance(PPet->loc.p, PPet->PMaster->loc.p);
 
-    if (currentDistance > PetRoamDistance)
+    if (currentDistance <= PetRoamDistance)
     {
-        if (!PPet->PAI->PathFind->IsFollowingPath() ||
-            distance(PPet->PAI->PathFind->GetDestination(), PPet->PMaster->loc.p) > 2.0f) // recalculate path only if owner moves more than X yalms
-        {
-            if (!PPet->PAI->PathFind->PathAround(PPet->PMaster->loc.p, 2.0f, PATHFLAG_RUN | PATHFLAG_WALLHACK))
-            {
-                if (!PPet->PAI->PathFind->PathInRange(PPet->PMaster->loc.p, 2.0f, PATHFLAG_RUN | PATHFLAG_WALLHACK))
-                {
-                    // If we got here, the pet isn't able to path to master
-                    // But it cant, so maybe we teleported or dropped down a hole
-                    PPet->PAI->PathFind->WarpTo(PPet->PMaster->loc.p, PetRoamDistance);
-                }
-            }
-        }
-
-        PPet->PAI->PathFind->FollowPath(m_Tick);
+        co_return;
     }
+
+    // Recalculate path only if owner moves more than X yalms
+    if (!PPet->PAI->PathFind->IsFollowingPath() ||
+        distance(PPet->PAI->PathFind->GetDestination(), PPet->PMaster->loc.p) > 2.0f)
+    {
+        if (!PPet->PAI->PathFind->PathAround(PPet->PMaster->loc.p, 2.0f, PATHFLAG_RUN | PATHFLAG_WALLHACK) &&
+            !PPet->PAI->PathFind->PathInRange(PPet->PMaster->loc.p, 2.0f, PATHFLAG_RUN | PATHFLAG_WALLHACK))
+        {
+            // If we got here, the pet isn't able to path to master
+            // But it cant, so maybe we teleported or dropped down a hole
+            PPet->PAI->PathFind->WarpTo(PPet->PMaster->loc.p, PetRoamDistance);
+        }
+    }
+
+    PPet->PAI->PathFind->FollowPath(m_Tick);
+
+    co_return;
 }
 
 bool CPetController::PetIsHealing()
 {
-    bool isMasterHealing = (PPet->PMaster->animation == ANIMATION_HEALING);
-    bool isPetHealing    = (PPet->animation == ANIMATION_HEALING);
+    const auto isMasterHealing = PPet->PMaster->animation == ANIMATION_HEALING;
+    const auto isPetHealing    = PPet->animation == ANIMATION_HEALING;
 
     if (isMasterHealing && !isPetHealing && !PPet->StatusEffectContainer->HasPreventActionEffect())
     {
-        // animation down
+        // Animation down
         PPet->animation = ANIMATION_HEALING;
-        PPet->StatusEffectContainer->AddStatusEffect(new CStatusEffect(EFFECT_HEALING, 0, 0, std::chrono::seconds(settings::get<uint8>("map.HEALING_TICK_DELAY")), 0s));
+        PPet->StatusEffectContainer->AddStatusEffect(xi::StatusEffect::Healing, 0, 0, std::chrono::seconds(settings::get<uint8>("map.HEALING_TICK_DELAY")), 0s);
         PPet->updatemask |= UPDATE_HP;
         return true;
     }
     else if (!isMasterHealing && isPetHealing)
     {
-        // animation up
+        // Animation up
         PPet->animation = ANIMATION_NONE;
-        PPet->StatusEffectContainer->DelStatusEffect(EFFECT_HEALING);
+        PPet->StatusEffectContainer->DelStatusEffect(xi::StatusEffect::Healing);
         PPet->updatemask |= UPDATE_HP;
         return false;
     }
+
     return isMasterHealing;
 }
 
@@ -187,21 +214,26 @@ bool CPetController::TryDeaggro()
     {
         return true;
     }
+
     return false;
 }
 
 bool CPetController::Ability(uint16 targid, uint16 abilityid)
 {
+    TracyZoneScoped;
+
     if (PPet->PAI->CanChangeState())
     {
         return PPet->PAI->Internal_Ability(targid, abilityid);
     }
+
     return false;
 }
 
 bool CPetController::PetSkill(uint16 targid, uint16 abilityid)
 {
     TracyZoneScoped;
+
     if (POwner)
     {
         FaceTarget(targid);

@@ -21,12 +21,13 @@
 
 #include "0x0f6_tracking_end.h"
 
-#include "entities/charentity.h"
+#include "entities/char_entity.h"
 
 auto GP_CLI_COMMAND_TRACKING_END::validate(MapSession* PSession, const CCharEntity* PChar) const -> PacketValidationResult
 {
     // No parameter to validate.
-    return PacketValidator();
+    return PacketValidator(PChar)
+        .blockedBy({ BlockedState::InEvent });
 }
 
 void GP_CLI_COMMAND_TRACKING_END::process(MapSession* PSession, CCharEntity* PChar) const

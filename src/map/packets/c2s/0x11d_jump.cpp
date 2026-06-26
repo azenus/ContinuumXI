@@ -21,16 +21,17 @@
 
 #include "0x11d_jump.h"
 
-#include "entities/charentity.h"
+#include "entities/char_entity.h"
 #include "packets/s2c/0x029_battle_message.h"
 #include "packets/s2c/0x11e_jump.h"
 #include "utils/jailutils.h"
 
 auto GP_CLI_COMMAND_JUMP::validate(MapSession* PSession, const CCharEntity* PChar) const -> PacketValidationResult
 {
-    return PacketValidator()
-        .mustEqual(UniqueNo, PChar->id, "Character ID mismatch")
-        .mustEqual(ActIndex, PChar->targid, "Target ID mismatch");
+    return PacketValidator(PChar)
+        .blockedBy({ BlockedState::InEvent })
+        .mustEqual(this->UniqueNo, PChar->id, "Character ID mismatch")
+        .mustEqual(this->ActIndex, PChar->targid, "Target ID mismatch");
 }
 
 void GP_CLI_COMMAND_JUMP::process(MapSession* PSession, CCharEntity* PChar) const
@@ -41,5 +42,5 @@ void GP_CLI_COMMAND_JUMP::process(MapSession* PSession, CCharEntity* PChar) cons
         return;
     }
 
-    PChar->loc.zone->PushPacket(PChar, CHAR_INRANGE_SELF, std::make_unique<GP_SERV_COMMAND_JUMP>(PChar, ActIndex));
+    PChar->loc.zone->PushPacket(PChar, CHAR_INRANGE_SELF, std::make_unique<GP_SERV_COMMAND_JUMP>(PChar, this->ActIndex));
 }

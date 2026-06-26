@@ -21,14 +21,14 @@
 
 #include "0x084_shop_sell_req.h"
 
-#include "entities/charentity.h"
+#include "entities/char_entity.h"
 #include "packets/s2c/0x03d_shop_sell.h"
 #include "trade_container.h"
 
 auto GP_CLI_COMMAND_SHOP_SELL_REQ::validate(MapSession* PSession, const CCharEntity* PChar) const -> PacketValidationResult
 {
-    return PacketValidator()
-        .isNotCrafting(PChar);
+    return PacketValidator(PChar)
+        .blockedBy({ BlockedState::InEvent, BlockedState::Crafting });
 }
 
 void GP_CLI_COMMAND_SHOP_SELL_REQ::process(MapSession* PSession, CCharEntity* PChar) const
@@ -36,7 +36,7 @@ void GP_CLI_COMMAND_SHOP_SELL_REQ::process(MapSession* PSession, CCharEntity* PC
     uint32 quantity = this->ItemNum;
 
     const CItem* PItem = PChar->getStorage(LOC_INVENTORY)->GetItem(this->ItemIndex);
-    if (PItem && (PItem->getID() == this->ItemNo) && !(PItem->getFlag() & ITEM_FLAG_NOSALE))
+    if (PItem && (PItem->getID() == this->ItemNo) && !PItem->hasFlag(ItemFlag::NoSale))
     {
         quantity = std::min(quantity, PItem->getQuantity());
         // Store item-to-sell in the last slot of the shop container

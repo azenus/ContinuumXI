@@ -21,16 +21,16 @@
 
 #include "0x0f2_submapchange.h"
 
-#include "entities/charentity.h"
+#include "entities/char_entity.h"
 #include "utils/charutils.h"
 
 auto GP_CLI_COMMAND_SUBMAPCHANGE::validate(MapSession* PSession, const CCharEntity* PChar) const -> PacketValidationResult
 {
     // TODO: List of valid submap numbers per zone
-    auto pv = PacketValidator()
-                  .range("State", State, GP_CLI_COMMAND_SUBMAPCHANGE_STATE::General, GP_CLI_COMMAND_SUBMAPCHANGE_STATE::Event);
+    auto pv = PacketValidator(PChar)
+                  .range("State", this->State, GP_CLI_COMMAND_SUBMAPCHANGE_STATE::General, GP_CLI_COMMAND_SUBMAPCHANGE_STATE::Event);
 
-    if (State == static_cast<uint8_t>(GP_CLI_COMMAND_SUBMAPCHANGE_STATE::Event))
+    if (this->State == static_cast<uint8_t>(GP_CLI_COMMAND_SUBMAPCHANGE_STATE::Event))
     {
         pv.mustNotEqual(PChar->currentEvent, nullptr, "Character not in event");
     }
@@ -40,7 +40,7 @@ auto GP_CLI_COMMAND_SUBMAPCHANGE::validate(MapSession* PSession, const CCharEnti
 
 void GP_CLI_COMMAND_SUBMAPCHANGE::process(MapSession* PSession, CCharEntity* PChar) const
 {
-    PChar->loc.boundary = SubMapNumber;
+    PChar->loc.boundary = this->SubMapNumber;
 
     charutils::SaveCharPosition(PChar);
 }

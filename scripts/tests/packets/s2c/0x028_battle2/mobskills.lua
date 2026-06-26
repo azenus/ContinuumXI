@@ -95,7 +95,7 @@ local packets =
         test = function(player, mob)
             player:gotoZone(xi.zone.DYNAMIS_SAN_DORIA)
             local thfMob = player.entities:moveTo('Vanguard_Pillager')
-            thfMob:useMobAbility(xi.mobSkill.PERFECT_DODGE_1)
+            thfMob:useMobAbility(xi.mobSkill.PERFECT_DODGE_1, thfMob)
             xi.test.world:tickEntity(thfMob)
         end,
 
@@ -314,7 +314,7 @@ local packets =
     {
         test = function(player, mob)
             player:gotoZone(xi.zone.DYNAMIS_WINDURST)
-            local yagudo = player.entities:moveTo('Vanguard_Chanter')
+            local yagudo = player.entities:moveTo('Vanguard_Sentinel')
             yagudo:updateEnmity(player)
             yagudo:addTP(3000)
             yagudo:useMobAbility(xi.mobSkill.SWEEP, player, 5, true)
@@ -392,7 +392,7 @@ local packets =
     {
         test = function(player)
             local mob = player.entities:moveTo('Clipper')
-            mob:useMobAbility(xi.mobSkill.BIG_SCISSORS, player, 10)
+            mob:useMobAbility(xi.mobSkill.BIG_SCISSORS_1, player, 10)
             xi.test.world:tickEntity(mob)
             mob:setHP(0)              -- Kill mob while in "ready" state
             xi.test.world:skipTime(3) -- Process death and interrupt

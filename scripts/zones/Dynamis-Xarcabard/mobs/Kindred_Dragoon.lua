@@ -16,7 +16,8 @@ entity.onMobInitialize = function(mob)
     xi.pet.setMobPet(mob, 1, 'Kindreds_Wyvern')
 end
 
-entity.onMobDeath = function(mob, player, optParams)
+entity.onMobSpawn = function(mob)
+    xi.dynamis.mobInfo(mob)
 end
 
 entity.onMobDespawn = function(mob)

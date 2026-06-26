@@ -22,14 +22,14 @@
 #include "0x011_zone_transition.h"
 
 #include "ai/ai_container.h"
-#include "entities/charentity.h"
+#include "entities/char_entity.h"
 #include "map_session.h"
 #include "packets/s2c/0x050_equip_list.h"
 #include "utils/zoneutils.h"
 
 auto GP_CLI_COMMAND_ZONE_TRANSITION::validate(MapSession* PSession, const CCharEntity* PChar) const -> PacketValidationResult
 {
-    return PacketValidator()
+    return PacketValidator(PChar)
         .mustEqual(unknown00, 2, "unknown00 not 2")
         .mustEqual(unknown01, 0, "unknown01 not 0");
 }

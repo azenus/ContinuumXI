@@ -20,7 +20,7 @@
 */
 
 #include "guild.h"
-#include "entities/charentity.h"
+#include "entities/char_entity.h"
 #include "items/item.h"
 #include "lua/luautils.h"
 
@@ -73,7 +73,7 @@ void CGuild::updateGuildPointsPattern(uint8 pattern)
                 const auto points    = rset->get<uint16>("points");
                 const auto maxPoints = rset->get<uint16>("max_points");
 
-                m_GPItems[i].emplace_back(itemutils::GetItemPointer(itemId), maxPoints, points);
+                m_GPItems[i].emplace_back(xi::items::lookup(itemId), maxPoints, points);
             }
         }
     }

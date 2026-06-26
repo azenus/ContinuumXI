@@ -21,21 +21,22 @@
 
 #include "0x0d8_dungeon_param.h"
 
-#include "entities/charentity.h"
+#include "entities/char_entity.h"
 
 auto GP_CLI_COMMAND_DUNGEON_PARAM::validate(MapSession* PSession, const CCharEntity* PChar) const -> PacketValidationResult
 {
     // Not implemented.
-    return PacketValidator()
-        .mustEqual(PChar->id, UniqueNo, "Character ID mismatch")
-        .mustEqual(PChar->targid, ActIndex, "Targid mismatch");
+    return PacketValidator(PChar)
+        .blockedBy({ BlockedState::InEvent })
+        .mustEqual(PChar->id, this->UniqueNo, "Character ID mismatch")
+        .mustEqual(PChar->targid, this->ActIndex, "Targid mismatch");
 }
 
 void GP_CLI_COMMAND_DUNGEON_PARAM::process(MapSession* PSession, CCharEntity* PChar) const
 {
     ShowDebugFmt("GP_CLI_COMMAND_DUNGEON_PARAM: Not implemented. ActIndex: {}, Param1: {}, Param2: {}, UniqueNo: {}",
-                 ActIndex,
-                 Param1,
-                 Param2,
-                 UniqueNo);
+                 this->ActIndex,
+                 this->Param1,
+                 this->Param2,
+                 this->UniqueNo);
 }

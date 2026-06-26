@@ -21,14 +21,15 @@
 
 #include "0x117_unity_quest.h"
 
-#include "entities/charentity.h"
+#include "entities/char_entity.h"
 #include "packets/s2c/0x110_unity.h"
 #include "utils/charutils.h"
 
 auto GP_CLI_COMMAND_UNITY_QUEST::validate(MapSession* PSession, const CCharEntity* PChar) const -> PacketValidationResult
 {
-    return PacketValidator()
-        .mustEqual(Kind, 0x0, "Kind not 0x0"); // Client always sends 0x0 despite possibly supporting 0x1, 0x2
+    return PacketValidator(PChar)
+        .blockedBy({ BlockedState::InEvent })
+        .mustEqual(this->Kind, 0x0, "Kind not 0x0"); // Client always sends 0x0 despite possibly supporting 0x1, 0x2
 }
 
 void GP_CLI_COMMAND_UNITY_QUEST::process(MapSession* PSession, CCharEntity* PChar) const

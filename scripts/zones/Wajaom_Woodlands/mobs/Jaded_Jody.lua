@@ -15,17 +15,20 @@ entity.spawnPoints =
 
 entity.phList =
 {
-    [ID.mob.JADED_JODY - 2]  = ID.mob.JADED_JODY, -- -560 -8 -360
-    [ID.mob.JADED_JODY + 12] = ID.mob.JADED_JODY, -- -565 -7 -324
+    [ID.mob.JADED_JODY - 1]  = ID.mob.JADED_JODY, -- Confirmed on retail
 }
 
 entity.onMobInitialize = function(mob)
     mob:addImmunity(xi.immunity.LIGHT_SLEEP)
     mob:addImmunity(xi.immunity.DARK_SLEEP)
+    mob:addImmunity(xi.immunity.PLAGUE)
+    mob:addImmunity(xi.immunity.SILENCE)
+    mob:addImmunity(xi.immunity.TERROR)
 end
 
 entity.onMobSpawn = function(mob)
     xi.mix.toau_morbol.config(mob, { nightRoaming = 1, })
+    mob:setMobMod(xi.mobMod.BASE_DAMAGE_MULTIPLIER, 150)
 end
 
 entity.onMobMobskillChoose = function(mob, target, skillId)

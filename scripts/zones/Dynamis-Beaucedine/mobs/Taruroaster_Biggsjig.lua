@@ -23,7 +23,8 @@ entity.phList =
     [ID.mob.TARUROASTER_BIGGSJIG - 1] = ID.mob.TARUROASTER_BIGGSJIG, -- Vanguard_Mesmerizer
 }
 
-entity.onMobDeath = function(mob, player, optParams)
+entity.onMobSpawn = function(mob)
+    xi.dynamis.mobInfo(mob)
 end
 
 return entity

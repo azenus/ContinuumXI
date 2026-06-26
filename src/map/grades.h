@@ -24,7 +24,7 @@
 
 #include "common/cbasetypes.h"
 
-#include "entities/battleentity.h"
+#include "entities/battle_entity.h"
 
 namespace grade
 {
@@ -36,7 +36,6 @@ float GetHPScale(uint8 rank, uint8 scale);
 float GetMPScale(uint8 rank, uint8 scale);
 float GetStatScale(uint8 rank, uint8 scale);
 uint8 GetMobHPScale(uint8 rank, uint8 scale);
-uint8 GetMobRBI(uint8 rank, uint8 scale);
 
 }; // namespace grade
 

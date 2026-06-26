@@ -21,18 +21,19 @@
 
 #include "0x0f5_tracking_start.h"
 
-#include "entities/charentity.h"
+#include "entities/char_entity.h"
 #include "utils/charutils.h"
 
 auto GP_CLI_COMMAND_TRACKING_START::validate(MapSession* PSession, const CCharEntity* PChar) const -> PacketValidationResult
 {
-    return PacketValidator()
-        .range("ActIndex", ActIndex, 0x1, 0x1000); // 1 to 4096
+    return PacketValidator(PChar)
+        .blockedBy({ BlockedState::InEvent })
+        .range("ActIndex", this->ActIndex, 0x1, 0x1000); // 1 to 4096
 }
 
 void GP_CLI_COMMAND_TRACKING_START::process(MapSession* PSession, CCharEntity* PChar) const
 {
-    CBaseEntity* target = PChar->GetEntity(ActIndex, TYPE_MOB | TYPE_NPC);
+    CBaseEntity* target = PChar->GetEntity(this->ActIndex, TYPE_MOB | TYPE_NPC);
     if (target == nullptr)
     {
         // Target not found

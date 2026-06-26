@@ -21,23 +21,24 @@
 
 #include "0x09b_chocobo_race_req.h"
 
-#include "entities/charentity.h"
+#include "entities/char_entity.h"
 #include "packets/basic.h"
 
 auto GP_CLI_COMMAND_CHOCOBO_RACE_REQ::validate(MapSession* PSession, const CCharEntity* PChar) const -> PacketValidationResult
 {
-    return PacketValidator()
-        .oneOf<GP_CLI_COMMAND_CHOCOBO_RACE_REQ_PARAM>(Param)
-        .oneOf<GP_CLI_COMMAND_CHOCOBO_RACE_REQ_KIND>(Kind);
+    return PacketValidator(PChar)
+        .blockedBy({ BlockedState::InEvent })
+        .oneOf<GP_CLI_COMMAND_CHOCOBO_RACE_REQ_PARAM>(this->Param)
+        .oneOf<GP_CLI_COMMAND_CHOCOBO_RACE_REQ_KIND>(this->Kind);
 }
 
 void GP_CLI_COMMAND_CHOCOBO_RACE_REQ::process(MapSession* PSession, CCharEntity* PChar) const
 {
-    ShowDebugFmt("GP_CLI_COMMAND_CHOCOBO_RACE_REQ: Not fully implemented. Param: {}, Kind: {}", Param, Kind);
+    ShowDebugFmt("GP_CLI_COMMAND_CHOCOBO_RACE_REQ: Not fully implemented. Param: {}, Kind: {}", this->Param, this->Kind);
 
     // NOTE: Can trigger with !cs 335 from Chocobo Circuit
 
-    switch (static_cast<GP_CLI_COMMAND_CHOCOBO_RACE_REQ_KIND>(Kind))
+    switch (static_cast<GP_CLI_COMMAND_CHOCOBO_RACE_REQ_KIND>(this->Kind))
     {
         case GP_CLI_COMMAND_CHOCOBO_RACE_REQ_KIND::Toteboard:
         {

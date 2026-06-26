@@ -23,7 +23,8 @@ entity.phList =
     [ID.mob.TUFFLIX_LOGLIMBS - 2] = ID.mob.TUFFLIX_LOGLIMBS, -- Vanguard_Armorer      15.499   8.384   -36.562
 }
 
-entity.onMobDeath = function(mob, player, optParams)
+entity.onMobSpawn = function(mob)
+    xi.dynamis.mobInfo(mob)
 end
 
 return entity

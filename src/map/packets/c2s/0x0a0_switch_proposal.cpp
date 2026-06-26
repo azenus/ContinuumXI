@@ -21,17 +21,21 @@
 
 #include "0x0a0_switch_proposal.h"
 
-#include "entities/charentity.h"
+#include "entities/char_entity.h"
+#include "nominate_manager.h"
+#include "zone.h"
 
 auto GP_CLI_COMMAND_SWITCH_PROPOSAL::validate(MapSession* PSession, const CCharEntity* PChar) const -> PacketValidationResult
 {
-    // Not implemented.
-    return PacketValidator()
-        .oneOf<GP_CLI_COMMAND_SWITCH_PROPOSAL_KIND>(Kind);
+    return PacketValidator(PChar)
+        .blockedBy({ BlockedState::InEvent })
+        .oneOf<GP_CLI_COMMAND_SWITCH_PROPOSAL_KIND>(this->Kind);
 }
 
 void GP_CLI_COMMAND_SWITCH_PROPOSAL::process(MapSession* PSession, CCharEntity* PChar) const
 {
-    auto str = asStringFromUntrustedSource(Str, sizeof(Str));
-    ShowDebugFmt("GP_CLI_COMMAND_SWITCH_PROPOSAL: Not implemented. Kind: {}, Str: {}", Kind, str);
+    if (PChar->loc.zone)
+    {
+        PChar->loc.zone->nominateManager().onProposal(PChar, *this);
+    }
 }

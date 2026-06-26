@@ -21,14 +21,15 @@
 
 #include "0x10c_roe_start.h"
 
-#include "entities/charentity.h"
+#include "entities/char_entity.h"
 #include "packets/s2c/0x029_battle_message.h"
 #include "packets/s2c/0x110_unity.h"
 #include "roe.h"
 
 auto GP_CLI_COMMAND_ROE_START::validate(MapSession* PSession, const CCharEntity* PChar) const -> PacketValidationResult
 {
-    return PacketValidator()
+    return PacketValidator(PChar)
+        .blockedBy({ BlockedState::InEvent })
         .mustEqual(settings::get<bool>("main.ENABLE_ROE"), true, "RoE is disabled")
         .range("ObjectiveId", this->ObjectiveId, 0, 4096)
         .mustEqual(roeutils::RoeSystem.TimedRecords.test(this->ObjectiveId), false, "Cannot start a timed record")

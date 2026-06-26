@@ -21,25 +21,23 @@
 
 #include "0x0ea_sit.h"
 
-#include "entities/charentity.h"
-#include "entities/petentity.h"
+#include "entities/char_entity.h"
+#include "entities/pet_entity.h"
 #include "status_effect_container.h"
 
 auto GP_CLI_COMMAND_SIT::validate(MapSession* PSession, const CCharEntity* PChar) const -> PacketValidationResult
 {
-    return PacketValidator()
-        .isNotCrafting(PChar)
-        .isNormalStatus(PChar)
-        .isNotPreventedAction(PChar)
-        .oneOf<GP_CLI_COMMAND_SIT_MODE>(Mode);
+    return PacketValidator(PChar)
+        .blockedBy({ BlockedState::InEvent, BlockedState::AbnormalStatus, BlockedState::Crafting, BlockedState::PreventAction })
+        .oneOf<GP_CLI_COMMAND_SIT_MODE>(this->Mode);
 }
 
 void GP_CLI_COMMAND_SIT::process(MapSession* PSession, CCharEntity* PChar) const
 {
     // Retail accurate: Can inject /sit while healing/logging out, but it cancels the effect.
-    PChar->StatusEffectContainer->DelStatusEffectSilent(EFFECT_HEALING);
+    PChar->StatusEffectContainer->DelStatusEffectSilent(xi::StatusEffect::Healing);
 
-    switch (static_cast<GP_CLI_COMMAND_SIT_MODE>(Mode))
+    switch (static_cast<GP_CLI_COMMAND_SIT_MODE>(this->Mode))
     {
         case GP_CLI_COMMAND_SIT_MODE::Toggle:
             PChar->animation = PChar->animation == ANIMATION_SIT ? ANIMATION_NONE : ANIMATION_SIT;

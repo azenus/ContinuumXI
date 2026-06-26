@@ -22,7 +22,7 @@
 #include "inventory_sync_state.h"
 
 #include "common/database.h"
-#include "entities/charentity.h"
+#include "entities/char_entity.h"
 #include "items/item.h"
 #include "packets/s2c/0x020_item_attr.h"
 
@@ -52,6 +52,15 @@ void InventorySyncState::queueEquipChange(CONTAINER_ID container, uint8 containe
 {
     pendingEquipChanges_.emplace_back(container, containerSlotId, equipSlot, item, equipping);
     dirtyContainers_.insert(equipping ? container : static_cast<CONTAINER_ID>(item->getLocationID()));
+}
+
+void InventorySyncState::removeEquipChange(const CItem* item)
+{
+    std::erase_if(pendingEquipChanges_,
+                  [&](const equip_change_t& x)
+                  {
+                      return x.item == item;
+                  });
 }
 
 void InventorySyncState::clearEquipChanges()

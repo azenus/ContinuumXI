@@ -59,14 +59,14 @@ endif(TRACY_ENABLE)
 CPMAddPackage(
     NAME fmt
     GITHUB_REPOSITORY fmtlib/fmt
-    GIT_TAG 11.2.0
+    GIT_TAG 12.1.0
     SYSTEM ON
 ) # defines: fmt::fmt
 
 CPMAddPackage(
     NAME spdlog
     GITHUB_REPOSITORY gabime/spdlog
-    GIT_TAG v1.15.3
+    GIT_TAG v1.17.0
     SYSTEM ON
     OPTIONS
         "SPDLOG_ENABLE_PCH ON"
@@ -76,11 +76,9 @@ CPMAddPackage(
 CPMAddPackage(
     NAME recastnavigation
     GITHUB_REPOSITORY recastnavigation/recastnavigation
-    GIT_TAG bd98d84c274ee06842bf51a4088ca82ac71f8c2d
+    GIT_TAG 1078bfe346d9bb560faa748c8fde2e7aae73a3ab
     SYSTEM ON
     OPTIONS
-        # TODO: Remove this once recast is updated to use CMake 3.5+, it's currently set to what we use in the root CMakeLists.txt
-        "CMAKE_POLICY_VERSION_MINIMUM 3.20"
         "RECASTNAVIGATION_DEMO OFF"
         "RECASTNAVIGATION_TESTS OFF"
         "RECASTNAVIGATION_EXAMPLES OFF"
@@ -97,6 +95,28 @@ CPMAddPackage(
 ) # defines: fast_obj
 
 CPMAddPackage(
+    NAME earcut_hpp
+    GITHUB_REPOSITORY mapbox/earcut.hpp
+    GIT_TAG v2.2.4
+    DOWNLOAD_ONLY ON
+) # defines: earcut_hpp
+if(earcut_hpp_ADDED) # header-only
+    add_library(earcut_hpp INTERFACE)
+    target_include_directories(earcut_hpp SYSTEM INTERFACE ${earcut_hpp_SOURCE_DIR}/include/)
+endif()
+
+CPMAddPackage(
+    NAME rapidyaml
+    GITHUB_REPOSITORY biojppm/rapidyaml
+    GIT_TAG v0.12.0
+    SYSTEM ON
+    OPTIONS
+        "RYML_BUILD_TOOLS OFF"
+        "RYML_BUILD_API OFF"
+        "RYML_INSTALL OFF"
+) # defines: ryml
+
+CPMAddPackage(
     NAME argparse
     GITHUB_REPOSITORY p-ranav/argparse
     GIT_TAG d924b84eba1f0f0adf38b20b7b4829f6f65b6570
@@ -105,8 +125,8 @@ CPMAddPackage(
 
 CPMAddPackage(
     NAME efsw
-    GITHUB_REPOSITORY zach2good/efsw
-    GIT_TAG c37c7e0fc6bbd63659edeba458273c35a51513da # master
+    GITHUB_REPOSITORY SpartanJ/efsw
+    GIT_TAG 22f17a0bcdf3a4edf61f8b14328391463389e548 # master
     SYSTEM ON
     OPTIONS
         "VERBOSE OFF"
@@ -248,6 +268,13 @@ CPMAddPackage(
     SYSTEM ON
 ) # defines: termcolor::termcolor
 
+CPMAddPackage(
+    NAME unordered_dense
+    GITHUB_REPOSITORY martinus/unordered_dense
+    GIT_TAG v4.4.0
+    SYSTEM ON
+) # defines: unordered_dense::unordered_dense (aliased to FlatHashMap, see src/common/flat_hash_map.h)
+
 set(SHARED_EXTERNAL_LIBS
     fmt::fmt
     spdlog
@@ -262,6 +289,8 @@ set(SHARED_EXTERNAL_LIBS
     asio
     alpaca
     magic_enum
+    utf8cpp
+    unordered_dense::unordered_dense
 )
 
 if(WIN32)
@@ -280,9 +309,11 @@ elseif(APPLE)
     )
 elseif(UNIX)
     # Linux needs bfd as it's not native like MacOS
+    # bfd may link zstd
     list(APPEND SHARED_EXTERNAL_LIBS
         bfd
         dl
+        zstd
     )
 endif()
 
@@ -295,6 +326,8 @@ set(MAP_ONLY_EXTERNAL_LIBS
     RecastNavigation::Recast
     RecastNavigation::Detour
     fast_obj
+    earcut_hpp
+    ryml
     zlibstatic
 )
 

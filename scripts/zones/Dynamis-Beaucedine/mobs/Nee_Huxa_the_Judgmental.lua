@@ -24,7 +24,8 @@ entity.phList =
     [ID.mob.NEE_HUXA_THE_JUDGMENTAL - 2] = ID.mob.NEE_HUXA_THE_JUDGMENTAL, -- Vanguard_Inciter
 }
 
-entity.onMobDeath = function(mob, player, optParams)
+entity.onMobSpawn = function(mob)
+    xi.dynamis.mobInfo(mob)
 end
 
 return entity

@@ -21,13 +21,13 @@
 
 #include "0x114_map_markers.h"
 
-#include "entities/charentity.h"
+#include "entities/char_entity.h"
 #include "packets/s2c/0x063_miscdata_homepoints.h"
 
 auto GP_CLI_COMMAND_MAP_MARKERS::validate(MapSession* PSession, const CCharEntity* PChar) const -> PacketValidationResult
 {
     // No parameters to validate for this packet.
-    return PacketValidator();
+    return PacketValidator(PChar);
 }
 
 void GP_CLI_COMMAND_MAP_MARKERS::process(MapSession* PSession, CCharEntity* PChar) const

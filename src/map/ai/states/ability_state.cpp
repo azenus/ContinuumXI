@@ -27,9 +27,9 @@
 #include "ai/ai_container.h"
 #include "common/utils.h"
 #include "enmity_container.h"
-#include "entities/charentity.h"
-#include "entities/mobentity.h"
-#include "entities/petentity.h"
+#include "entities/char_entity.h"
+#include "entities/mob_entity.h"
+#include "entities/pet_entity.h"
 #include "packets/s2c/0x028_battle2.h"
 #include "packets/s2c/0x029_battle_message.h"
 #include "petskill.h"
@@ -37,6 +37,7 @@
 #include "status_effect_container.h"
 #include "utils/battleutils.h"
 #include "utils/charutils.h"
+#include "utils/zoneutils.h"
 
 namespace
 {
@@ -130,12 +131,12 @@ CAbilityState::CAbilityState(CBattleEntity* PEntity, uint16 targid, uint16 abili
             .actiontype = ActionCategory::AbilityStart,
             .targets    = {
                 {
-                       .actorId = PTarget->id,
-                       .results = {
+                    .actorId = PTarget->id,
+                    .results = {
                         {
-                               .animation = ActionAnimation::SkillStart,
-                               .param     = PAbility->getID(),
-                               .messageID = MsgBasic::ReadiesSkill,
+                            .animation = ActionAnimation::SkillStart,
+                            .param     = PAbility->getID(),
+                            .messageID = MsgBasic::ReadiesSkill,
                         },
                     },
                 },
@@ -209,9 +210,13 @@ bool CAbilityState::Update(timer::time_point tick)
             {
                 m_PEntity->loc.zone->PushPacket(m_PEntity, CHAR_INRANGE_SELF, std::make_unique<GP_SERV_COMMAND_BATTLE2>(action));
             }
-            if (auto* target = GetTarget())
+            for (auto& actionTarget : action.targets)
             {
-                target->PAI->EventHandler.triggerListener("ABILITY_TAKE", m_PEntity, target, m_PAbility.get(), &action);
+                auto* PActionTarget = dynamic_cast<CBattleEntity*>(zoneutils::GetEntity(actionTarget.actorId));
+                if (PActionTarget)
+                {
+                    PActionTarget->PAI->EventHandler.triggerListener("ABILITY_TAKE", m_PEntity, PActionTarget, m_PAbility.get(), &action);
+                }
             }
         }
 
@@ -248,8 +253,8 @@ bool CAbilityState::CanUseAbility()
             return false;
         }
 
-        if (PChar->StatusEffectContainer->HasStatusEffect(EFFECT_AMNESIA) ||
-            (PChar->StatusEffectContainer->HasStatusEffect(EFFECT_IMPAIRMENT) && (PChar->StatusEffectContainer->GetStatusEffect(EFFECT_IMPAIRMENT)->GetPower() == 0x01 || PChar->StatusEffectContainer->GetStatusEffect(EFFECT_IMPAIRMENT)->GetPower() == 0x03)) ||
+        if (PChar->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Amnesia) ||
+            (PChar->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Impairment) && (PChar->StatusEffectContainer->GetStatusEffect(xi::StatusEffect::Impairment)->GetPower() == 0x01 || PChar->StatusEffectContainer->GetStatusEffect(xi::StatusEffect::Impairment)->GetPower() == 0x03)) ||
             (!PAbility->isPetAbility() && !charutils::hasAbility(PChar, PAbility->getID())) ||
             (PAbility->isPetAbility() && PAbility->getID() >= ABILITY_HEALING_RUBY && !charutils::hasPetAbility(PChar, PAbility->getID() - ABILITY_HEALING_RUBY)))
         {
@@ -275,7 +280,7 @@ bool CAbilityState::CanUseAbility()
                 return false;
             }
 
-            if (m_PEntity->loc.zone->CanUseMisc(MISC_LOS_PLAYER_BLOCK) && !m_PEntity->CanSeeTarget(PTarget, false))
+            if (m_PEntity->loc.zone->CanUseMisc(MISC_LOS_PLAYER_BLOCK) && !m_PEntity->CanSeeTarget(PTarget))
             {
                 PChar->pushPacket<GP_SERV_COMMAND_BATTLE_MESSAGE>(PChar, PTarget, 0, 0, MsgBasic::UnableToSeeTarget);
                 return false;
@@ -295,9 +300,9 @@ bool CAbilityState::CanUseAbility()
     else
     {
         bool   cancelAbility   = false;
-        bool   hasAmnesia      = m_PEntity->StatusEffectContainer->HasStatusEffect(EFFECT_AMNESIA);
-        bool   hasImpairment   = m_PEntity->StatusEffectContainer->HasStatusEffect(EFFECT_IMPAIRMENT);
-        uint16 impairmentPower = hasImpairment ? m_PEntity->StatusEffectContainer->GetStatusEffect(EFFECT_IMPAIRMENT)->GetPower() : 0;
+        bool   hasAmnesia      = m_PEntity->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Amnesia);
+        bool   hasImpairment   = m_PEntity->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Impairment);
+        uint16 impairmentPower = hasImpairment ? m_PEntity->StatusEffectContainer->GetStatusEffect(xi::StatusEffect::Impairment)->GetPower() : 0;
 
         if (!PTarget)
         {

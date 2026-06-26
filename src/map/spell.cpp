@@ -142,7 +142,7 @@ bool CSpell::isBuff() const
 
 bool CSpell::tookEffect() const
 {
-    return !(m_message == MsgBasic::MagicNoEffect || m_message == MsgBasic::MagicResistedTarget || m_message == MsgBasic::TargetNoEffect || m_message == MsgBasic::MagicResisted);
+    return !(m_message == MsgBasic::MagicNoEffect || m_message == MsgBasic::MagicResistedTarget || m_message == MsgBasic::TargetNoEffect || m_message == MsgBasic::MagicResisted || m_message == MsgBasic::MagicCompleteResist || m_message == MsgBasic::MagicFail);
 }
 
 bool CSpell::hasMPCost()
@@ -312,6 +312,16 @@ auto CSpell::getModifier() const -> ActionModifier
 void CSpell::setModifier(const ActionModifier modifier)
 {
     m_MessageModifier = modifier;
+}
+
+auto CSpell::isCritical() const -> bool
+{
+    return critical_;
+}
+
+void CSpell::setCritical(const bool isCritical)
+{
+    critical_ = isCritical;
 }
 
 void CSpell::setPrimaryTargetID(uint32 targid)
@@ -562,12 +572,12 @@ void LoadSpellList()
         }
 
         filename = fmt::format("./scripts/actions/spells/{}/{}.lua", switchKey, PSpell->getName());
-        luautils::CacheLuaObjectFromFile(filename);
+        luautils::LoadLuaObjectFromFile(filename);
     }
 
     rset = db::preparedStmt("SELECT blue_spell_list.spellid, blue_spell_list.mob_skill_id, blue_spell_list.set_points, "
                             "blue_spell_list.trait_category, blue_spell_list.trait_category_weight, blue_spell_list.primary_sc, "
-                            "blue_spell_list.secondary_sc, blue_spell_list.tertiary_sc, spell_list.content_tag "
+                            "blue_spell_list.secondary_sc, blue_spell_list.tertiary_sc, blue_spell_list.knockback, spell_list.content_tag "
                             "FROM blue_spell_list JOIN spell_list on blue_spell_list.spellid = spell_list.spellid");
     FOR_DB_MULTIPLE_RESULTS(rset)
     {
@@ -584,13 +594,16 @@ void LoadSpellList()
             continue;
         }
 
-        static_cast<CBlueSpell*>(PSpellList[spellId])->setMonsterSkillId(rset->get<uint16>("mob_skill_id"));
-        static_cast<CBlueSpell*>(PSpellList[spellId])->setSetPoints(rset->get<uint16>("set_points"));
-        static_cast<CBlueSpell*>(PSpellList[spellId])->setTraitCategory(rset->get<uint16>("trait_category"));
-        static_cast<CBlueSpell*>(PSpellList[spellId])->setTraitWeight(rset->get<uint16>("trait_category_weight"));
-        static_cast<CBlueSpell*>(PSpellList[spellId])->setPrimarySkillchain(rset->get<uint16>("primary_sc"));
-        static_cast<CBlueSpell*>(PSpellList[spellId])->setSecondarySkillchain(rset->get<uint16>("secondary_sc"));
-        static_cast<CBlueSpell*>(PSpellList[spellId])->setTertiarySkillchain(rset->get<uint16>("tertiary_sc"));
+        auto* PBlueSpell = static_cast<CBlueSpell*>(PSpellList[spellId]);
+
+        PBlueSpell->setMonsterSkillId(rset->get<uint16>("mob_skill_id"));
+        PBlueSpell->setSetPoints(rset->get<uint16>("set_points"));
+        PBlueSpell->setTraitCategory(rset->get<uint16>("trait_category"));
+        PBlueSpell->setTraitWeight(rset->get<uint16>("trait_category_weight"));
+        PBlueSpell->setPrimarySkillchain(rset->get<uint16>("primary_sc"));
+        PBlueSpell->setSecondarySkillchain(rset->get<uint16>("secondary_sc"));
+        PBlueSpell->setTertiarySkillchain(rset->get<uint16>("tertiary_sc"));
+        PBlueSpell->setKnockback(rset->getOrDefault<Knockback>("knockback", Knockback::None));
         PMobSkillToBlueSpell.insert(std::make_pair(rset->get<uint16>("mob_skill_id"), spellId));
     }
 
@@ -706,7 +719,7 @@ bool CanUseSpell(CBattleEntity* PCaster, CSpell* spell)
                 usable = true;
                 if (requirements & SPELLREQ_TABULA_RASA)
                 {
-                    if (!PCaster->StatusEffectContainer->HasStatusEffect(EFFECT_TABULA_RASA))
+                    if (!PCaster->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::TabulaRasa))
                     {
                         usable = false;
                     }
@@ -715,14 +728,14 @@ bool CanUseSpell(CBattleEntity* PCaster, CSpell* spell)
                 {
                     if (requirements & SPELLREQ_ADDENDUM_BLACK)
                     {
-                        if (!PCaster->StatusEffectContainer->HasStatusEffect({ EFFECT_ADDENDUM_BLACK, EFFECT_ENLIGHTENMENT }))
+                        if (!PCaster->StatusEffectContainer->HasStatusEffect({ xi::StatusEffect::AddendumBlack, xi::StatusEffect::Enlightenment }))
                         {
                             usable = false;
                         }
                     }
                     else if (requirements & SPELLREQ_ADDENDUM_WHITE)
                     {
-                        if (!PCaster->StatusEffectContainer->HasStatusEffect({ EFFECT_ADDENDUM_WHITE, EFFECT_ENLIGHTENMENT }))
+                        if (!PCaster->StatusEffectContainer->HasStatusEffect({ xi::StatusEffect::AddendumWhite, xi::StatusEffect::Enlightenment }))
                         {
                             usable = false;
                         }
@@ -732,7 +745,7 @@ bool CanUseSpell(CBattleEntity* PCaster, CSpell* spell)
                 {
                     if (requirements & SPELLREQ_UNBRIDLED_LEARNING)
                     {
-                        if (!PCaster->StatusEffectContainer->HasStatusEffect({ EFFECT_UNBRIDLED_LEARNING, EFFECT_UNBRIDLED_WISDOM }))
+                        if (!PCaster->StatusEffectContainer->HasStatusEffect({ xi::StatusEffect::UnbridledLearning, xi::StatusEffect::UnbridledWisdom }))
                         {
                             usable = false;
                         }
@@ -754,7 +767,7 @@ bool CanUseSpell(CBattleEntity* PCaster, CSpell* spell)
                 usable = true;
                 if (requirements & SPELLREQ_TABULA_RASA)
                 {
-                    if (!PCaster->StatusEffectContainer->HasStatusEffect(EFFECT_TABULA_RASA))
+                    if (!PCaster->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::TabulaRasa))
                     {
                         usable = false;
                     }
@@ -763,14 +776,14 @@ bool CanUseSpell(CBattleEntity* PCaster, CSpell* spell)
                 {
                     if (requirements & SPELLREQ_ADDENDUM_BLACK)
                     {
-                        if (!PCaster->StatusEffectContainer->HasStatusEffect({ EFFECT_ADDENDUM_BLACK, EFFECT_ENLIGHTENMENT }))
+                        if (!PCaster->StatusEffectContainer->HasStatusEffect({ xi::StatusEffect::AddendumBlack, xi::StatusEffect::Enlightenment }))
                         {
                             usable = false;
                         }
                     }
                     else if (requirements & SPELLREQ_ADDENDUM_WHITE)
                     {
-                        if (!PCaster->StatusEffectContainer->HasStatusEffect({ EFFECT_ADDENDUM_WHITE, EFFECT_ENLIGHTENMENT }))
+                        if (!PCaster->StatusEffectContainer->HasStatusEffect({ xi::StatusEffect::AddendumWhite, xi::StatusEffect::Enlightenment }))
                         {
                             usable = false;
                         }
@@ -780,7 +793,7 @@ bool CanUseSpell(CBattleEntity* PCaster, CSpell* spell)
                 {
                     if (requirements & SPELLREQ_UNBRIDLED_LEARNING)
                     {
-                        if (!PCaster->StatusEffectContainer->HasStatusEffect({ EFFECT_UNBRIDLED_LEARNING, EFFECT_UNBRIDLED_WISDOM }))
+                        if (!PCaster->StatusEffectContainer->HasStatusEffect({ xi::StatusEffect::UnbridledLearning, xi::StatusEffect::UnbridledWisdom }))
                         {
                             usable = false;
                         }

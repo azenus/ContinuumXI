@@ -21,15 +21,15 @@
 
 #include "0x112_battlefield_req.h"
 
-#include "entities/charentity.h"
+#include "entities/char_entity.h"
 
 auto GP_CLI_COMMAND_BATTLEFIELD_REQ::validate(MapSession* PSession, const CCharEntity* PChar) const -> PacketValidationResult
 {
-    return PacketValidator()
-        .oneOf<GP_CLI_COMMAND_BATTLEFIELD_REQ_KIND>(Kind);
+    return PacketValidator(PChar)
+        .oneOf<GP_CLI_COMMAND_BATTLEFIELD_REQ_KIND>(this->Kind);
 }
 
 void GP_CLI_COMMAND_BATTLEFIELD_REQ::process(MapSession* PSession, CCharEntity* PChar) const
 {
-    ShowDebugFmt("GP_CLI_COMMAND_BATTLEFIELD_REQ: Not implemented. Kind: {}", Kind);
+    ShowDebugFmt("GP_CLI_COMMAND_BATTLEFIELD_REQ: Not implemented. Kind: {}", this->Kind);
 }

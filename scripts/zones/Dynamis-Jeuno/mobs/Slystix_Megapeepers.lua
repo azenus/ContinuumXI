@@ -23,7 +23,8 @@ entity.phList =
     [ID.mob.SLYSTIX_MEGAPEEPERS - 1] = ID.mob.SLYSTIX_MEGAPEEPERS, -- Vanguard_Hitman       -8.440   2.500   118.349
 }
 
-entity.onMobDeath = function(mob, player, optParams)
+entity.onMobSpawn = function(mob)
+    xi.dynamis.mobInfo(mob)
 end
 
 return entity

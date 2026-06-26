@@ -23,7 +23,8 @@ entity.phList =
     [ID.mob.GAFHO_VENOMTOUCH - 1] = ID.mob.GAFHO_VENOMTOUCH, -- Vanguard_Constable
 }
 
-entity.onMobDeath = function(mob, player, optParams)
+entity.onMobSpawn = function(mob)
+    xi.dynamis.mobInfo(mob)
 end
 
 return entity

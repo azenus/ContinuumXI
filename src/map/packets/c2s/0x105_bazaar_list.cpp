@@ -21,22 +21,23 @@
 
 #include "0x105_bazaar_list.h"
 
-#include "entities/charentity.h"
+#include "entities/char_entity.h"
 #include "packets/s2c/0x105_bazaar_list.h"
 #include "packets/s2c/0x108_bazaar_shopping.h"
 
 auto GP_CLI_COMMAND_BAZAAR_LIST::validate(MapSession* PSession, const CCharEntity* PChar) const -> PacketValidationResult
 {
-    return PacketValidator()
+    return PacketValidator(PChar)
+        .blockedBy({ BlockedState::InEvent })
         .mustEqual(PChar->BazaarID.id, 0, "Character already has a Bazaar ID")
         .mustEqual(PChar->BazaarID.targid, 0, "Character already has a Bazaar Target ID");
 }
 
 void GP_CLI_COMMAND_BAZAAR_LIST::process(MapSession* PSession, CCharEntity* PChar) const
 {
-    CCharEntity* PTarget = UniqueNo != 0 ? PChar->loc.zone->GetCharByID(UniqueNo) : static_cast<CCharEntity*>(PChar->GetEntity(PChar->m_TargID, TYPE_PC));
+    CCharEntity* PTarget = this->UniqueNo != 0 ? PChar->loc.zone->GetCharByID(this->UniqueNo) : static_cast<CCharEntity*>(PChar->GetEntity(PChar->m_TargID, TYPE_PC));
 
-    if (PTarget != nullptr && PTarget->id == UniqueNo && PTarget->hasBazaar())
+    if (PTarget != nullptr && PTarget->id == this->UniqueNo && PTarget->hasBazaar())
     {
         PChar->BazaarID.id     = PTarget->id;
         PChar->BazaarID.targid = PTarget->targid;

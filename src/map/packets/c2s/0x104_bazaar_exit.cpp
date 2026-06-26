@@ -21,13 +21,14 @@
 
 #include "0x104_bazaar_exit.h"
 
-#include "entities/charentity.h"
+#include "entities/char_entity.h"
 #include "packets/s2c/0x108_bazaar_shopping.h"
 
 auto GP_CLI_COMMAND_BAZAAR_EXIT::validate(MapSession* PSession, const CCharEntity* PChar) const -> PacketValidationResult
 {
     // No parameters to validate.
-    return PacketValidator();
+    return PacketValidator(PChar)
+        .blockedBy({ BlockedState::InEvent });
 }
 
 void GP_CLI_COMMAND_BAZAAR_EXIT::process(MapSession* PSession, CCharEntity* PChar) const

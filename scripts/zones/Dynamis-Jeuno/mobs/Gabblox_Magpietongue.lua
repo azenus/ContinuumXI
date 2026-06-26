@@ -23,7 +23,8 @@ entity.phList =
     [ID.mob.GABBLOX_MAGPIETONGUE - 2] = ID.mob.GABBLOX_MAGPIETONGUE, -- Vanguard_Armorer      2.179    8.5     -61.613
 }
 
-entity.onMobDeath = function(mob, player, optParams)
+entity.onMobSpawn = function(mob)
+    xi.dynamis.mobInfo(mob)
 end
 
 return entity

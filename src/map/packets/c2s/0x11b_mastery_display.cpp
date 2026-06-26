@@ -21,22 +21,22 @@
 
 #include "0x11b_mastery_display.h"
 
-#include "entities/charentity.h"
+#include "entities/char_entity.h"
 #include "packets/char_status.h"
 #include "packets/char_sync.h"
 #include "utils/charutils.h"
 
 auto GP_CLI_COMMAND_MASTERY_DISPLAY::validate(MapSession* PSession, const CCharEntity* PChar) const -> PacketValidationResult
 {
-    return PacketValidator()
-        .oneOf<GP_CLI_COMMAND_MASTERY_DISPLAY_MODE>(Mode);
+    return PacketValidator(PChar)
+        .oneOf<GP_CLI_COMMAND_MASTERY_DISPLAY_MODE>(this->Mode);
 }
 
 void GP_CLI_COMMAND_MASTERY_DISPLAY::process(MapSession* PSession, CCharEntity* PChar) const
 {
-    if (PChar->m_jobMasterDisplay != static_cast<bool>(Mode))
+    if (PChar->m_jobMasterDisplay != static_cast<bool>(this->Mode))
     {
-        PChar->m_jobMasterDisplay = Mode;
+        PChar->m_jobMasterDisplay = this->Mode;
 
         charutils::SaveJobMasterDisplay(PChar);
         PChar->pushPacket<CCharStatusPacket>(PChar);

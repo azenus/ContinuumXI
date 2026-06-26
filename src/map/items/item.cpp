@@ -22,6 +22,8 @@
 #include <cstring>
 
 #include "common/utils.h"
+#include "exdata/appraisable.h"
+#include "exdata/augment_standard.h"
 #include "item.h"
 
 /************************************************************************
@@ -41,12 +43,35 @@ CItem::CItem(uint16 id)
 , m_BasePrice(0)
 , m_CharPrice(0)
 , m_ahCat(0)
-, m_flag(0)
+, m_flag(ItemFlag::None)
 , m_slotID(-1)
 , m_locationID(-1)
 , m_sent(false)
 {
     std::memset(m_extra, 0, sizeof(m_extra));
+}
+
+CItem::CItem(const CItem& other)
+: m_id(other.m_id)
+, m_subid(other.m_subid)
+, m_type(other.m_type)
+, m_subtype(other.m_subtype)
+, m_quantity(other.m_quantity)
+, m_reserve(other.m_reserve)
+, m_stackSize(other.m_stackSize)
+, m_BasePrice(other.m_BasePrice)
+, m_CharPrice(other.m_CharPrice)
+, m_ahCat(other.m_ahCat)
+, m_flag(other.m_flag)
+, m_slotID(other.m_slotID)
+, m_locationID(other.m_locationID)
+, m_sent(other.m_sent)
+, dirty_(other.dirty_)
+, m_name(other.m_name)
+, m_send(other.m_send)
+, m_recv(other.m_recv)
+{
+    std::memcpy(m_extra, other.m_extra, sizeof(m_extra));
 }
 
 CItem::~CItem() = default;
@@ -89,14 +114,19 @@ uint16 CItem::getSubID() const
  *                                                                       *
  ************************************************************************/
 
-void CItem::setFlag(uint16 flag)
+void CItem::setFlag(const ItemFlag flag)
 {
     m_flag = flag;
 }
 
-uint16 CItem::getFlag() const
+auto CItem::getFlag() const -> ItemFlag
 {
     return m_flag;
+}
+
+auto CItem::hasFlag(const ItemFlag flag) const -> bool
+{
+    return (m_flag & flag) != ItemFlag::None;
 }
 
 /************************************************************************
@@ -107,12 +137,12 @@ uint16 CItem::getFlag() const
 
 uint8 CItem::getAppraisalID() const
 {
-    return m_extra[0x16];
+    return this->exdata<Exdata::Appraisable>().AppraisalId;
 }
 
-void CItem::setAppraisalID(uint8 appraisailID)
+void CItem::setAppraisalID(uint8 appraisalID)
 {
-    m_extra[0x16] = appraisailID;
+    this->exdata<Exdata::Appraisable>().AppraisalId = appraisalID;
 }
 
 /************************************************************************
@@ -137,7 +167,7 @@ uint8 CItem::getAHCat() const
  *                                                                       *
  ************************************************************************/
 
-void CItem::setType(uint8 type)
+void CItem::setType(uint16 type)
 {
     m_type |= type;
 }
@@ -233,9 +263,9 @@ uint32 CItem::getBasePrice() const
  *                                                                       *
  ************************************************************************/
 
-void CItem::setCharPrice(uint32 CharPrice)
+void CItem::setCharPrice(const uint32 CharPrice)
 {
-    if (!(m_flag & ITEM_FLAG_EX))
+    if (!this->hasFlag(ItemFlag::Exclusive))
     {
         m_CharPrice = CharPrice;
     }
@@ -252,7 +282,7 @@ uint32 CItem::getCharPrice() const
  *                                                                       *
  ************************************************************************/
 
-const std::string& CItem::getName()
+const std::string& CItem::getName() const
 {
     return m_name;
 }
@@ -268,7 +298,7 @@ void CItem::setName(const std::string& name)
  *                                                                       *
  ************************************************************************/
 
-const std::string& CItem::getSender()
+const std::string& CItem::getSender() const
 {
     return m_send;
 }
@@ -284,7 +314,7 @@ void CItem::setSender(const std::string& sender)
  *                                                                       *
  ************************************************************************/
 
-const std::string& CItem::getReceiver()
+const std::string& CItem::getReceiver() const
 {
     return m_recv;
 }
@@ -300,18 +330,17 @@ void CItem::setReceiver(const std::string& receiver)
  *                                                                       *
  ************************************************************************/
 
-const std::string CItem::getSignature()
+auto CItem::getSignature() const -> const std::string
 {
-    char signature[SignatureStringLength] = {};
-    std::memcpy(&signature, m_extra + 0x0C, sizeof(signature));
-
-    return signature; // return string copy
+    return Exdata::decodeSignature(this->exdata<Exdata::AugmentStandard>().Signature);
 }
 
 void CItem::setSignature(const std::string& signature)
 {
+    char encoded[SignatureStringLength] = {};
+    EncodeStringSignature(signature, encoded);
     std::memset(m_extra + 0x0C, 0, sizeof(m_extra) - 0x0C);
-    std::memcpy(m_extra + 0x0C, signature.c_str(), signature.size());
+    std::memcpy(m_extra + 0x0C, encoded, sizeof(m_extra) - 0x0C);
 }
 
 /************************************************************************
@@ -391,4 +420,19 @@ bool CItem::isSoultrapper() const
 bool CItem::isMannequin() const
 {
     return m_id >= 256 && m_id <= 263;
+}
+
+auto CItem::state() const -> ItemState
+{
+    return state_;
+}
+
+void CItem::setState(const ItemState newState, xi::Badge<xi::items::detail::ItemAccess>)
+{
+    state_ = newState;
+}
+
+auto CItem::isBusy() const -> bool
+{
+    return state_ != ItemState::Free;
 }

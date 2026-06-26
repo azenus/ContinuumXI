@@ -57,21 +57,21 @@ jobs:
           echo "REPO_OWNER=${GITHUB_REPOSITORY_OWNER,,}" >>${GITHUB_ENV}
           echo "REPO=${GITHUB_REPOSITORY,,}" >>${GITHUB_ENV}
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 1
           submodules: recursive # For navmeshes
 
       - name: Download artifact
         if: ${{ github.event_name == 'pull_request' }}
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ${{ env.artifact_name }}
           path: ${{ runner.temp }}
 
       - name: Download previous artifact
         if: ${{ (github.event_name == 'workflow_run' || github.event_name == 'workflow_dispatch') && vars.PUBLISH_DOCKER == ''}}
-        uses: dawidd6/action-download-artifact@v3
+        uses: dawidd6/action-download-artifact@v21
         with:
           run_id: ${{ github.event.workflow_run.id }}
           name: ${{ env.artifact_name }}
@@ -91,7 +91,6 @@ jobs:
             --user root \
             --network ${{ job.services.database.network }} \
             --mount type=bind,src=./navmeshes,dst=/server/navmeshes \
-            --mount type=bind,src=./losmeshes,dst=/server/losmeshes \
             --mount type=bind,src=./ximeshes,dst=/server/ximeshes \
             --mount type=bind,src=./modules,dst=/server/modules \
             --mount type=bind,src=.,dst=/server/log \

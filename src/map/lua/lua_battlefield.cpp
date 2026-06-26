@@ -24,11 +24,11 @@
 
 #include "ai/ai_container.h"
 #include "battlefield.h"
-#include "entities/charentity.h"
-#include "entities/mobentity.h"
-#include "entities/npcentity.h"
-#include "entities/trustentity.h"
-#include "lua_baseentity.h"
+#include "entities/char_entity.h"
+#include "entities/mob_entity.h"
+#include "entities/npc_entity.h"
+#include "entities/trust_entity.h"
+#include "lua_base_entity.h"
 #include "lua_battlefield.h"
 #include "mob_modifier.h"
 #include "status_effect_container.h"
@@ -330,7 +330,7 @@ void CLuaBattlefield::addGroups(const sol::table& groups, bool hasMultipleArenas
 
         if (!entityIds.empty())
         {
-            uint32 stride = uint32(entityIds.size()) / m_PLuaBattlefield->GetZone()->m_BattlefieldHandler->MaxBattlefieldAreas();
+            uint32 stride = uint32(entityIds.size()) / m_PLuaBattlefield->GetZone()->battlefieldHandler()->MaxBattlefieldAreas();
 
             // Look to see if there's an Armoury Crate within the group of monsters
             static const std::string ARMOURY_CRATE = "Armoury_Crate";
@@ -368,6 +368,7 @@ void CLuaBattlefield::addGroups(const sol::table& groups, bool hasMultipleArenas
     // The entities to be added to the battlefield
     std::set<uint32> entities;
     std::set<uint32> spawnedEntities;
+    std::set<uint32> explicitPartyEntities;
 
     std::vector<BattlefieldGroup> battlefieldGroups;
     for (const auto& entry : groups)
@@ -490,6 +491,8 @@ void CLuaBattlefield::addGroups(const sol::table& groups, bool hasMultipleArenas
                 {
                     party->AddMember(PMob);
                 }
+
+                explicitPartyEntities.insert(entity->id);
             }
         }
 
@@ -586,7 +589,8 @@ void CLuaBattlefield::addGroups(const sol::table& groups, bool hasMultipleArenas
 
                 for (const auto& modifier : mobMods.get<sol::table>())
                 {
-                    PMob->setMobMod(modifier.first.as<uint16>(), modifier.second.as<uint16>());
+                    const auto mobMod = modifier.first.as<uint16>();
+                    PMob->setMobMod(mobMod, modifier.second.as<uint16>());
                 }
                 PMob->saveMobModifiers();
             }
@@ -680,12 +684,43 @@ void CLuaBattlefield::addGroups(const sol::table& groups, bool hasMultipleArenas
         m_PLuaBattlefield->addGroup(group);
     }
 
+    // Rebuild party links after all the battlefield groups have their modifiers applied
+    // This avoids ordering bugs when SUPERLINK/SUBLINK or other link-affecting state
+    // are assigned after the zone-load party pass.
+    for (uint32 entityID : entities)
+    {
+        if (explicitPartyEntities.find(entityID) != explicitPartyEntities.end())
+        {
+            continue;
+        }
+
+        auto* PMob = dynamic_cast<CMobEntity*>(zoneutils::GetEntity(entityID, TYPE_MOB));
+        if (PMob != nullptr && PMob->PParty != nullptr)
+        {
+            PMob->PParty->RemoveMember(PMob);
+        }
+    }
+
+    for (uint32 entityID : entities)
+    {
+        if (explicitPartyEntities.find(entityID) != explicitPartyEntities.end())
+        {
+            continue;
+        }
+
+        CBaseEntity* entity = zoneutils::GetEntity(entityID, TYPE_MOB);
+        if (entity != nullptr)
+        {
+            m_PLuaBattlefield->GetZone()->FindPartyForMob(entity);
+        }
+    }
+
     if (m_PLuaBattlefield->GetArmouryCrate() != 0)
     {
         if (auto* entity = dynamic_cast<CNpcEntity*>(zoneutils::GetEntity(m_PLuaBattlefield->GetArmouryCrate(), TYPE_NPC)))
         {
             m_PLuaBattlefield->InsertEntity(entity, true, CONDITION_DISAPPEAR_AT_START);
-            entity->SetUntargetable(true);
+            entity->setUntargetable(true);
             entity->ResetLocalVars();
             entity->PAI->EventHandler.removeListener("TRIGGER_CRATE");
         }

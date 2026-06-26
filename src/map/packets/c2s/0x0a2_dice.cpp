@@ -21,14 +21,15 @@
 
 #include "0x0a2_dice.h"
 
-#include "entities/charentity.h"
+#include "entities/char_entity.h"
 #include "enums/msg_std.h"
 #include "packets/s2c/0x009_message.h"
 
 auto GP_CLI_COMMAND_DICE::validate(MapSession* PSession, const CCharEntity* PChar) const -> PacketValidationResult
 {
     // No parameter to validate for this packet.
-    return PacketValidator();
+    return PacketValidator(PChar)
+        .blockedBy({ BlockedState::InEvent });
 }
 
 void GP_CLI_COMMAND_DICE::process(MapSession* PSession, CCharEntity* PChar) const

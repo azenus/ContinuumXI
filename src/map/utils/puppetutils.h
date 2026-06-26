@@ -21,7 +21,7 @@
 
 #pragma once
 
-#include "entities/charentity.h"
+#include "entities/char_entity.h"
 #include "status_effect.h"
 
 namespace puppetutils
@@ -30,14 +30,14 @@ namespace puppetutils
 void LoadAutomaton(CCharEntity* PChar);
 void SaveAttachments(CCharEntity* PChar);
 void SaveAutomaton(CCharEntity* PChar);
-auto UnlockAttachment(CCharEntity* PChar, CItem* PItem) -> bool;
-auto HasAttachment(const CCharEntity* PChar, CItem* PItem) -> bool;
+auto UnlockAttachment(CCharEntity* PChar, const CItem* PItem) -> bool;
+auto HasAttachment(const CCharEntity* PChar, const CItem* PItem) -> bool;
 void setAttachment(CCharEntity* PChar, uint8 slotId, uint8 attachment);
 void setFrame(CCharEntity* PChar, AutomatonFrame frame);
 void setHead(CCharEntity* PChar, AutomatonHead head);
 auto getSkillCap(const CCharEntity* PChar, SKILLTYPE skill, uint8 level) -> uint16;
 void TrySkillUP(CAutomatonEntity* PAutomaton, SKILLTYPE SkillID, uint8 lvl);
-void CheckAttachmentsForManeuver(const CCharEntity* PChar, EFFECT maneuver, bool gain);
+void CheckAttachmentsForManeuver(const CCharEntity* PChar, xi::StatusEffect maneuver, bool gain);
 void EquipAttachments(CAutomatonEntity* PAutomaton);
 void UpdateAttachments(const CCharEntity* PChar);
 void PreLevelRestriction(const CCharEntity* PChar);

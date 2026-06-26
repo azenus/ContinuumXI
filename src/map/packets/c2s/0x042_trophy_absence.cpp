@@ -21,20 +21,21 @@
 
 #include "0x042_trophy_absence.h"
 
-#include "entities/charentity.h"
+#include "entities/char_entity.h"
 #include "treasure_pool.h"
 
 auto GP_CLI_COMMAND_TROPHY_ABSENCE::validate(MapSession* PSession, const CCharEntity* PChar) const -> PacketValidationResult
 {
-    return PacketValidator()
+    return PacketValidator(PChar)
+        .blockedBy({ BlockedState::InEvent })
         .mustNotEqual(PChar->PTreasurePool, nullptr, "Character does not have a treasure pool")
-        .range("TrophyItemIndex", TrophyItemIndex, 0, TREASUREPOOL_SIZE - 1);
+        .range("TrophyItemIndex", this->TrophyItemIndex, 0, TREASUREPOOL_SIZE - 1);
 }
 
 void GP_CLI_COMMAND_TROPHY_ABSENCE::process(MapSession* PSession, CCharEntity* PChar) const
 {
-    if (!PChar->PTreasurePool->hasPassedItem(PChar, TrophyItemIndex))
+    if (!PChar->PTreasurePool->hasPassedItem(PChar, this->TrophyItemIndex))
     {
-        PChar->PTreasurePool->passItem(PChar, TrophyItemIndex);
+        PChar->PTreasurePool->passItem(PChar, this->TrophyItemIndex);
     }
 }

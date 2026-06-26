@@ -244,9 +244,10 @@ end
 -- Mob calculation: https://docs.google.com/spreadsheets/d/1YBoveP-weMdidrirY-vPDzHyxbEI2ryECINlfCnFkLI/edit?gid=224123492#gid=224123492&range=C50
 xi.combat.physical.calculateMeleeStatFactor = function(actor, target)
     local fSTR = 0 -- The variable we want to calculate.
+    local mLvl = actor:getMainLvl()
 
     -- Early return: Mobs at or under lvl 1.
-    if actor:isMob() and actor:getMainLvl() <= 1 then
+    if actor:isMob() and mLvl <= 1 then
         return 1
     end
 
@@ -255,8 +256,36 @@ xi.combat.physical.calculateMeleeStatFactor = function(actor, target)
 
     -- Pets and Mobs.
     if actor:isMob() or actor:isPet() then
-        fSTR = math.floor((statDiff + 4) / 4)
-        fSTR = utils.clamp(fSTR, -20, 24)
+        if statDiff >= 36 then
+            fSTR = (statDiff - 4) / 4
+        elseif statDiff >= 26 then
+            fSTR = (statDiff - 3) / 4
+        elseif statDiff >= 17 then
+            fSTR = (statDiff - 2) / 4
+        elseif statDiff >= 4 then
+            fSTR = (statDiff - 1) / 4
+        elseif statDiff >= -8 then
+            fSTR = statDiff / 4
+        elseif statDiff >= -13 then
+            fSTR = (statDiff + 1) / 4
+        elseif statDiff >= -19 then
+            fSTR = (statDiff + 3) / 4
+        elseif statDiff >= -32 then
+            fSTR = (statDiff + 4) / 4
+        elseif statDiff >= -42 then
+            fSTR = (statDiff + 5) / 4
+        elseif statDiff >= -54 then
+            fSTR = (statDiff + 6) / 4
+        elseif statDiff >= -67 then
+            fSTR = (statDiff + 7) / 4
+        elseif statDiff >= -76 then
+            fSTR = (statDiff + 8) / 4
+        else -- <= -77
+            fSTR = (statDiff + 9) / 4
+        end
+
+        fSTR = math.floor(fSTR)
+        fSTR = utils.clamp(fSTR, math.floor(mLvl / 5) - 1, math.floor(mLvl / 5) + 5)
 
         return fSTR
     end
@@ -305,9 +334,10 @@ end
 -- Gobli Wiki: https://w-atwiki-jp.translate.goog/studiogobli/pages/14.html?_x_tr_sl=auto&_x_tr_tl=en&_x_tr_hl=en&_x_tr_pto=wapp
 xi.combat.physical.calculateRangedStatFactor = function(actor, target)
     local fSTR = 0 -- The variable we want to calculate.
+    local mLvl = actor:getMainLvl()
 
     -- Early return: Mobs at or under lvl 1.
-    if actor:isMob() and actor:getMainLvl() <= 1 then
+    if actor:isMob() and mLvl <= 1 then
         return 1
     end
 
@@ -316,14 +346,40 @@ xi.combat.physical.calculateRangedStatFactor = function(actor, target)
 
     -- Pets and Mobs.
     if actor:isMob() or actor:isPet() then
-        fSTR = math.floor((statDiff + 4) / 2)
-        fSTR = utils.clamp(fSTR, -20, 24)
+        if statDiff >= 36 then
+            fSTR = (statDiff - 4) / 2
+        elseif statDiff >= 26 then
+            fSTR = (statDiff - 3) / 2
+        elseif statDiff >= 15 then
+            fSTR = (statDiff - 2) / 2
+        elseif statDiff >= 4 then
+            fSTR = (statDiff - 1) / 2
+        elseif statDiff >= -8 then
+            fSTR = statDiff / 2
+        elseif statDiff >= -16 then
+            fSTR = (statDiff + 1) / 2
+        elseif statDiff >= -31 then
+            fSTR = (statDiff + 1) / 2
+        elseif statDiff >= -42 then
+            fSTR = (statDiff + 3) / 2
+        elseif statDiff >= -53 then
+            fSTR = (statDiff + 3) / 2
+        elseif statDiff >= -64 then
+            fSTR = (statDiff + 5) / 2
+        elseif statDiff >= -76 then
+            fSTR = (statDiff + 6) / 2
+        else -- <= -77
+            fSTR = (statDiff + 7) / 2
+        end
+
+        fSTR = math.floor(fSTR)
+        fSTR = utils.clamp(fSTR, math.floor((mLvl / 5 - 1) * 2), math.floor((mLvl / 5 + 5) * 2))
 
         return fSTR
     end
 
     -- Players and Trusts
-    local weaponRank   = actor:getWeaponDmgRank()
+    local weaponRank   = actor:getRangedDmgRank()
     local statLowerCap = (7 + weaponRank * 2) * -2
     local statUpperCap = (14 + weaponRank * 2) * 2
 
@@ -518,6 +574,37 @@ xi.combat.physical.wRatioCapOthers = function(wRatio, pDifFinalCap)
     return pDifLowerCap, pDifUpperCap
 end
 
+---@param isPC boolean
+---@param wRatio number
+---@return number
+local function getSpikeRatio(isPC, wRatio)
+    if isPC then
+        -- https://www.bg-wiki.com/ffxi/PDIF#Average_Melee_pDIF(qRatio)
+        -- This is also known as "pDIF spike"
+        if wRatio > 0.5 and wRatio < 1.5 then -- 0.5 and 1.5 are 0% chance
+            local sRatio = (0.5 - math.abs(wRatio - 1)) * 1.2
+
+            return utils.clamp(sRatio, 0, 1 / 3) -- 1/3 (one-third), not 0.33
+        end
+    else
+        -- https://www.ffxiah.com/forum/topic/58479/monster-pdif-curves-and-other-info/#3751498
+        -- This is also known as "pDIF spike"
+        local sRatio = 0
+
+        if wRatio > 0.0 and wRatio < 0.75 then
+            sRatio = -5 / 9 + (10 / 9) * wRatio
+        elseif wRatio <= 1.3 then
+            sRatio = 0.3
+        else
+            sRatio = 5 / 3 - (270 / 256) * wRatio
+        end
+
+        return utils.clamp(sRatio, 0, 0.3)
+    end
+
+    return 0
+end
+
 -- WARNING: This function is used in src/utils/battleutils.cpp "GetDamageRatio" function.
 -- If you update this parameters, update them there aswell.
 ---@param actor CBaseEntity
@@ -556,6 +643,18 @@ xi.combat.physical.calculateMeleePDIF = function(actor, target, weaponType, wsAt
     -- TODO: it is unknown if ws attack mod and flourish bonus are additive or multiplicative
     -- TODO: do flourish and attack mods come before or after food?
     actorAttack = math.max(1, math.floor(actor:getStat(xi.mod.ATT, weaponSlot) * wsAttackMod * flourishBonus))
+
+    -- handle attuner
+    -- note: isAutomaton is checked inside xi.automaton.handleAttuner and could be removed
+    if actor:isAutomaton() then
+        local defIgnore = xi.automaton.handleAttuner(actor, target)
+
+        tpFactor = tpFactor + defIgnore
+
+        if tpFactor > 0 then
+            tpIgnoresDefense = true
+        end
+    end
 
     -- Target Defense Modifiers.
     if tpIgnoresDefense then
@@ -614,16 +713,10 @@ xi.combat.physical.calculateMeleePDIF = function(actor, target, weaponType, wsAt
     if actor:isPC() then
         pDifFinalCap = (xi.combat.physical.pDifWeaponCapTable[weaponType] + damageLimitPlus) * damageLimitPercent + (isCritical and 1 or 0)
 
-        -- https://www.bg-wiki.com/ffxi/PDIF#Average_Melee_pDIF(qRatio)
-        -- This is also known as "pDIF spike"
-        if wRatio > 0.5 and wRatio < 1.5 then -- 0.5 and 1.5 are 0% chance
-            local sRatio = (0.5 - math.abs(wRatio - 1)) * 1.2
+        local sRatio = getSpikeRatio(true, wRatio)
 
-            sRatio = utils.clamp(sRatio, 0, 1 / 3) -- 1/3 (one-third), not 0.33
-
-            if math.random(1, 10000) / 10000 <= sRatio then
-                return 1.0
-            end
+        if math.random(1, 10000) / 10000 <= sRatio then
+            return 1.0
         end
 
         pDifLowerCap, pDifUpperCap = xi.combat.physical.wRatioCapPC(wRatio, pDifFinalCap)
@@ -635,19 +728,7 @@ xi.combat.physical.calculateMeleePDIF = function(actor, target, weaponType, wsAt
         local critBonus = (applyLevelCorrection and isCritical) and 1 or 0
         pDifFinalCap    = (basePDIF + damageLimitPlus) * damageLimitPercent + critBonus
 
-        -- https://www.ffxiah.com/forum/topic/58479/monster-pdif-curves-and-other-info/#3751498
-        -- This is also known as "pDIF spike"
-        local sRatio = 0
-
-        if wRatio > 0.0 and wRatio < 0.75 then
-            sRatio = -5 / 9 + (10 / 9) * wRatio
-        elseif wRatio <= 1.3 then
-            sRatio = 0.3
-        else
-            sRatio = 5 / 3 - (270 / 256) * wRatio
-        end
-
-        sRatio = utils.clamp(sRatio, 0, 0.3)
+        local sRatio = getSpikeRatio(false, wRatio)
 
         if math.random(1, 10000) / 10000 <= sRatio then
             return 1.0
@@ -658,10 +739,18 @@ xi.combat.physical.calculateMeleePDIF = function(actor, target, weaponType, wsAt
 
     -- Apply level correction to UL/LL
     -- https://www.ffxiah.com/forum/topic/57989/post-2016-level-correction-testing/
-    pDifLowerCap = pDifLowerCap + levelDifFactor
-    pDifUpperCap = pDifUpperCap + levelDifFactor
+    -- Dice roll the 50/50 chance to select two different bounds. Mote has not yet implemented the spike by the time of this post so his ratio is not 50/50 rate.
+    -- His model at the time and implemented spike, so the (0.0, 0.5) bounds also looks different
+    -- https://www.bluegartr.com/threads/108161-pDif-and-damage?p=5007487&viewfull=1#post5007487
+    local upperMax   = math.random(0, 1) == 0 and 0.5 or 0
+    local upperBound = math.max(pDifUpperCap + levelDifFactor, upperMax)
+    local lowerbound = math.max(pDifLowerCap + levelDifFactor, 0)
 
-    pDif = math.random(pDifLowerCap * 1000, pDifUpperCap * 1000) / 1000
+    if upperBound == 0 then
+        return 0
+    end
+
+    pDif = math.random(lowerbound * 1000, upperBound * 1000) / 1000
 
     ----------------------------------------
     -- Step 4: Melee random factor.
@@ -725,9 +814,9 @@ xi.combat.physical.calculateRangedPDIF = function(actor, target, weaponType, wsA
 
     if tpIgnoresDefense then
         ignoreDefenseFactor = 1 - tpFactor
-    end
 
-    targetDefense = math.floor(targetDefense * ignoreDefenseFactor)
+        targetDefense = math.max(1, math.floor(targetDefense * ignoreDefenseFactor))
+    end
 
     if targetDefense ~= 0 then
         baseRatio = actorAttack / targetDefense
@@ -808,6 +897,9 @@ xi.combat.physical.calculateRangedPDIF = function(actor, target, weaponType, wsA
 
     pDif = math.random(pDifLowerCap * 1000, pDifUpperCap * 1000) / 1000
 
+    -- do not go negative, rolls below zero (proportionally) need to be rolled
+    pDif = math.max(pDif, 0)
+
     ----------------------------------------
     -- Step 4: Ranged critical factor. Bypasses caps.
     ----------------------------------------
@@ -848,6 +940,17 @@ xi.combat.physical.criticalRateFromStatDiff = function(actor, target)
     elseif dDex >= 7 then
         statBonus = 0.01
     end
+
+    return statBonus
+end
+
+-- dStat: Ranged critical hit rate bonus from AGI vs AGI difference.
+xi.combat.physical.criticalRateFromAGIDiff = function(actor, target)
+    local statBonus = 0
+
+    local dAgi = math.max(0, actor:getStat(xi.mod.AGI) - target:getStat(xi.mod.AGI))
+    statBonus = math.floor(dAgi / 10)
+    statBonus = statBonus / 100
 
     return statBonus
 end
@@ -948,6 +1051,38 @@ xi.combat.physical.calculateSwingCriticalRate = function(actor, target, actorTP,
     return utils.clamp(finalCriticalRate, 0.05, 1) -- TODO: Need confirmation of no upper cap.
 end
 
+---@param actor CBaseEntity
+---@param target CBaseEntity
+---@param actorTP number
+---@param slot xi.slot
+---@param optCritModTable table?
+---@return integer
+xi.combat.physical.calculateRangedCriticalRate = function(actor, target, actorTP, slot, optCritModTable)
+    -- See reference at https://www.bg-wiki.com/ffxi/Critical_Hit_Rate
+    local finalCriticalRate     = 0
+    local baseCriticalRate      = 0.05
+    local statBonus             = xi.combat.physical.criticalRateFromAGIDiff(actor, target)
+    local inninBonus            = xi.combat.physical.criticalRateFromInnin(actor, target)
+    local fencerBonus           = xi.combat.physical.criticalRateFromFencer(actor)
+    local buildingFlourishBonus = xi.combat.physical.criticalRateFromFlourish(actor)
+    local weaponSlotBonus       = xi.combat.physical.criticalRateFromWeaponSlot(actor, slot)
+    local modifierBonus         = actor:getMod(xi.mod.CRITHITRATE) / 100
+    local meritBonus            = actor:getMerit(xi.merit.CRIT_HIT_RATE) / 100
+    local targetCriticalEvasion = target:getMod(xi.mod.CRITICAL_HIT_EVASION) / 100
+    local targetMeritPenalty    = target:getMerit(xi.merit.ENEMY_CRIT_RATE) / 100
+    local tpFactor              = 0
+
+    -- For weaponskills.
+    if optCritModTable then
+        tpFactor = xi.combat.physical.calculateTPfactor(actorTP, optCritModTable)
+    end
+
+    -- Add all different bonuses and clamp.
+    finalCriticalRate = baseCriticalRate + statBonus + inninBonus + fencerBonus + buildingFlourishBonus + weaponSlotBonus + modifierBonus + meritBonus - targetCriticalEvasion - targetMeritPenalty + tpFactor
+
+    return utils.clamp(finalCriticalRate, 0.05, 1) -- TODO: Need confirmation of no upper cap.
+end
+
 xi.combat.physical.calculateNumberOfHits = function(actor, additionalParamsHere)
 end
 
@@ -980,7 +1115,12 @@ xi.combat.physical.canParry = function(defender, attacker)
         not defender:hasPreventActionEffect(true) -- Not stunned, slept, etc, but can parry when charmed
     then
         if defender:isPC() then
+            if defender:getSkillRank(xi.skill.PARRY) == 0 then
+                return false
+            end
+
             local mainWeapon = defender:getEquippedItem(xi.slot.MAIN)
+
             if mainWeapon then
                 canParry = mainWeapon:getSkillType() ~= xi.skill.HAND_TO_HAND
             end
@@ -1236,7 +1376,7 @@ xi.combat.physical.isBlocked = function(defender, attacker)
         if
             defender:isPC() and
             (blocked or                                  -- We blocked
-            not xi.settings.map.PARRY_OLD_SKILLUP_STYLE) -- Old style skillup is not enabled
+            not xi.settings.map.DEFENSIVE_OLD_SKILLUP_STYLE) -- Old style skillup is not enabled
         then
             defender:trySkillUp(xi.skill.SHIELD, attacker:getMainLvl())
         end
@@ -1275,7 +1415,7 @@ xi.combat.physical.isParried = function(defender, attacker)
         if
             isPC and
             (parried or                                  -- We parried
-            not xi.settings.map.PARRY_OLD_SKILLUP_STYLE) -- Old style skillup is not enabled
+            not xi.settings.map.DEFENSIVE_OLD_SKILLUP_STYLE) -- Old style skillup is not enabled
         then
             defender:trySkillUp(xi.skill.PARRY, attacker:getMainLvl())
         end
@@ -1303,7 +1443,7 @@ xi.combat.physical.isGuarded = function(defender, attacker)
         if
             isPC and
             (guarded or                                  -- We guarded
-            not xi.settings.map.PARRY_OLD_SKILLUP_STYLE) -- Old style skillup is not enabled
+            not xi.settings.map.DEFENSIVE_OLD_SKILLUP_STYLE) -- Old style skillup is not enabled
         then
             defender:trySkillUp(xi.skill.GUARD, attacker:getMainLvl())
         end

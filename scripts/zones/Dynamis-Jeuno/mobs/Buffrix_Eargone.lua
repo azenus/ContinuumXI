@@ -16,7 +16,8 @@ entity.spawnPoints =
     { x =  32.307, y = -0.500, z = -36.192 }
 }
 
-entity.onMobDeath = function(mob, player, optParams)
+entity.onMobSpawn = function(mob)
+    xi.dynamis.mobInfo(mob)
 end
 
 return entity

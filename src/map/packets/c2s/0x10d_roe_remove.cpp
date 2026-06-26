@@ -21,19 +21,20 @@
 
 #include "0x10d_roe_remove.h"
 
-#include "entities/charentity.h"
+#include "entities/char_entity.h"
 #include "packets/s2c/0x110_unity.h"
 #include "roe.h"
 
 auto GP_CLI_COMMAND_ROE_REMOVE::validate(MapSession* PSession, const CCharEntity* PChar) const -> PacketValidationResult
 {
-    return PacketValidator()
+    return PacketValidator(PChar)
+        .blockedBy({ BlockedState::InEvent })
         .mustEqual(settings::get<bool>("main.ENABLE_ROE"), true, "RoE is disabled")
-        .range("ObjectiveId", ObjectiveId, 0, 4096);
+        .range("ObjectiveId", this->ObjectiveId, 0, 4096);
 }
 
 void GP_CLI_COMMAND_ROE_REMOVE::process(MapSession* PSession, CCharEntity* PChar) const
 {
-    roeutils::DelEminenceRecord(PChar, ObjectiveId);
+    roeutils::DelEminenceRecord(PChar, this->ObjectiveId);
     PChar->pushPacket<GP_SERV_COMMAND_UNITY>(PChar);
 }

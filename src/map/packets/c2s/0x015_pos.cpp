@@ -21,12 +21,12 @@
 
 #include "0x015_pos.h"
 
-#include "entities/charentity.h"
+#include "entities/char_entity.h"
 #include "packets/s2c/0x0f5_tracking_pos.h"
 
 auto GP_CLI_COMMAND_POS::validate(MapSession* PSession, const CCharEntity* PChar) const -> PacketValidationResult
 {
-    return PacketValidator()
+    return PacketValidator(PChar)
         .mustNotEqual(PChar->status, STATUS_TYPE::DISAPPEAR, "Character is disappearing")
         .mustNotEqual(PChar->status, STATUS_TYPE::SHUTDOWN, "Character is shutting down");
 }
@@ -38,11 +38,11 @@ void GP_CLI_COMMAND_POS::process(MapSession* PSession, CCharEntity* PChar) const
         return;
     }
 
-    const float  newX        = x;
-    const float  newY        = z; // Not a typo.
-    const float  newZ        = y; // Not a typo.
-    const uint16 newTargID   = facetarget;
-    const uint8  newRotation = dir;
+    const float  newX        = this->x;
+    const float  newY        = this->z; // Not a typo.
+    const float  newZ        = this->y; // Not a typo.
+    const uint16 newTargID   = this->facetarget;
+    const uint8  newRotation = this->dir;
 
     // clang-format off
     const bool moved =
@@ -62,7 +62,7 @@ void GP_CLI_COMMAND_POS::process(MapSession* PSession, CCharEntity* PChar) const
         PChar->loc.p.y = newY;
         PChar->loc.p.z = newZ;
 
-        PChar->loc.p.moving   = MoveFlame;
+        PChar->loc.p.moving   = this->MoveFlame;
         PChar->loc.p.rotation = newRotation;
 
         PChar->m_TargID = newTargID;
@@ -71,6 +71,11 @@ void GP_CLI_COMMAND_POS::process(MapSession* PSession, CCharEntity* PChar) const
     if (moved)
     {
         PChar->updatemask |= UPDATE_POS; // Indicate that we want to update this PChar's PChar->loc or targID
+
+        if (PChar->loc.zone != nullptr)
+        {
+            PChar->loc.zone->onEntityMoved(PChar);
+        }
 
         // Calculate rough amount of steps taken
         if (PChar->m_previousLocation.zone->GetID() == PChar->loc.zone->GetID())

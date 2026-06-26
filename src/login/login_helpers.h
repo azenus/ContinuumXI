@@ -30,6 +30,7 @@
 #include <common/xirand.h>
 
 #include "login_errors.h"
+#include "login_packets.h"
 #include "nlohmann/json.hpp"
 #include "session.h"
 
@@ -86,6 +87,8 @@ enum FEATURE_DISPLAY : uint16
 
 bool isStringMalformed(const std::string& str, std::size_t max_length);
 
+auto isZoneAtPlayerCap(uint16 zoneId, bool isGM) -> bool;
+
 session_t& get_authenticated_session(const std::string& ipAddr, const std::string& sessionHash);
 
 // https://github.com/atom0s/XiPackets/blob/main/lobby/S2C_0x0004_ResponseError.md
@@ -97,7 +100,7 @@ uint16 generateFeatureBitmask();
 
 int32 saveCharacter(uint32 accid, uint32 charid, char_mini* createchar);
 
-int32 createCharacter(session_t& session, uint8* buf);
+int32 createCharacter(session_t& session, uint8* buf, lpkt_chr_info_sub2& charInfo);
 
 std::string getHashFromPacket(const std::string& ip_str, uint8* data);
 

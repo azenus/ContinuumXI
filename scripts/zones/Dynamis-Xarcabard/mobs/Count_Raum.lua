@@ -23,7 +23,8 @@ entity.phList =
     [ID.mob.COUNT_RAUM - 1] = ID.mob.COUNT_RAUM, -- Kindred_Thief
 }
 
-entity.onMobDeath = function(mob, player, optParams)
+entity.onMobSpawn = function(mob)
+    xi.dynamis.mobInfo(mob)
 end
 
 return entity

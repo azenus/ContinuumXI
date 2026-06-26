@@ -21,12 +21,13 @@
 
 #include "0x0d4_faq_gmparam.h"
 
-#include "entities/charentity.h"
+#include "entities/char_entity.h"
 #include "packets/s2c/0x0b5_faq_gmparam.h"
 
 auto GP_CLI_COMMAND_FAQ_GMPARAM::validate(MapSession* PSession, const CCharEntity* PChar) const -> PacketValidationResult
 {
-    return PacketValidator()
+    return PacketValidator(PChar)
+        .blockedBy({ BlockedState::InEvent })
         .mustEqual(this->Option, 0, "Option not 0");
 }
 

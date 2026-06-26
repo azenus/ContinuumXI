@@ -22,8 +22,6 @@
 #ifndef _CITEMEQUIPMENT_H
 #define _CITEMEQUIPMENT_H
 
-#include "common/utils.h"
-
 #include <vector>
 
 #include "item_usable.h"
@@ -45,25 +43,19 @@ enum SCRIPTTYPE : uint16
     //...
 };
 
-enum class ITEMCHECK
-{
-    NONE    = 0,
-    EQUIP   = 1,
-    UNEQUIP = 2
-};
-
 class CItemEquipment : public CItemUsable
 {
 public:
     CItemEquipment(uint16);
+    CItemEquipment(const CItemEquipment& other);
     virtual ~CItemEquipment();
 
     struct itemLatent
     {
-        LATENT ConditionsID;
-        uint16 ConditionsValue;
-        Mod    ModValue;
-        int16  ModPower;
+        xi::Latent ConditionsID;
+        uint16     ConditionsValue;
+        Mod        ModValue;
+        int16      ModPower;
     };
 
     uint8  getReqLvl() const;
@@ -78,8 +70,8 @@ public:
     uint8  getShieldAbsorption() const;
     int16  getModifier(Mod mod) const;
     uint8  getSlotType() const;
-    uint16 getAugment(uint8 slot);
-    uint16 getTrialNumber();
+    auto   getAugment(uint8 slot) const -> uint16;
+    auto   getTrialNumber() const -> uint16;
     uint8  getSuperiorLevel();
 
     bool IsShield() const;
@@ -112,7 +104,7 @@ public:
     {
         return addPetModifier(CPetModifier(mod, petType, modValue));
     };
-    void addLatent(LATENT ConditionsID, uint16 ConditionsValue, Mod ModValue, int16 ModPower);
+    void addLatent(xi::Latent ConditionsID, uint16 ConditionsValue, Mod ModValue, int16 ModPower);
 
     bool delModifier(Mod mod, int16 modValue);
     bool delPetModifier(Mod mod, PetModType petType, int16 modValue);
