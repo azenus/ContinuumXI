@@ -4,3 +4,6 @@
 [submodule "ximeshes"]
     path = ximeshes
     url = https://github.com/InoUno/ximeshes.git
+[submodule "Modules/LQS"]
+	path = Modules/LQS
+	url = https://github.com/LoxleyX/LQS.git
