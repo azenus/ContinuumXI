@@ -271,3 +271,7 @@ clang_tidy_summary.md
 # YAML codegen
 *.codegen.json
 *.codegen.lua
+/docs
+/.claude
+CLAUDE.md
+validate_code.py
