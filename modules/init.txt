@@ -38,6 +38,12 @@
 
 custom/commands/
 custom/lua/test_npcs_in_gm_home.lua
+
+# LQS (Loxley Quest System) -- must load BEFORE any module that calls LQS.*
+LQS/lib
+LQS/commands
+LQS/cpp
+
 continuum/lua
 continuum/cpp
 continuum/sql
