@@ -10,7 +10,7 @@ local quest = Quest:new(xi.questLog.WINDURST, xi.quest.id.windurst.OVERNIGHT_DEL
 
 quest.reward =
 {
-    fame = 100,
+    fame = 20,
     fameArea = xi.fameArea.WINDURST,
     item = xi.item.POWER_GI,
 }
@@ -222,7 +222,7 @@ quest.sections =
             ['Kenapa-Keppa'] =
             {
                 onTrigger = function(player, npc)
-                    if math.random(1, 100) <= 50 then
+                    if math.randomInt(1, 100) <= 50 then
                         return quest:event(349):replaceDefault()
                     else
                         return quest:event(350):replaceDefault()

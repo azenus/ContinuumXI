@@ -587,6 +587,7 @@ end
 
 xi.pets.automaton.onMobSpawn = function(mob)
     mob:setMobMod(xi.mobMod.CAN_PARRY, 1)
+    mob:setSpawnAnimation(xi.spawnAnimation.SPECIAL)
     applyAutomatonFrameMods(mob)
 
     mob:setLocalVar('MANEUVER_DURATION', 60)

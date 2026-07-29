@@ -26,7 +26,7 @@ entity.onTrigger = function(player, npc)
     local wonderingstatus = player:getQuestStatus(xi.questLog.WINDURST, xi.quest.id.windurst.WONDERING_MINSTREL)
     local fame = player:getFameLevel(xi.fameArea.WINDURST)
     if wonderingstatus == xi.questStatus.QUEST_AVAILABLE and fame >= 5 then
-        local rand = math.random(1, 2)
+        local rand = math.randomInt(1, 2)
         if rand == 1 then
             player:startEvent(633)          -- WONDERING_MINSTREL: Before Quest
         else
@@ -44,7 +44,7 @@ entity.onTrigger = function(player, npc)
         if hour >= 18 or hour <= 6 then
             player:startEvent(611)             -- Singing 1 (daytime < 6 or daytime >= 18)
         else
-            local rand = math.random(1, 2)
+            local rand = math.randomInt(1, 2)
             if rand == 1 then
                 player:startEvent(610)          -- Standard Conversation 1 (daytime)
             else
@@ -65,7 +65,7 @@ entity.onEventFinish = function(player, csid, option, npc)
             player:completeQuest(xi.questLog.WINDURST, xi.quest.id.windurst.WONDERING_MINSTREL)
             player:addItem(xi.item.FAERIE_PICCOLO)
             player:messageSpecial(ID.text.ITEM_OBTAINED, xi.item.FAERIE_PICCOLO)
-            player:addFame(xi.fameArea.WINDURST, 75)
+            player:addFame(xi.fameArea.WINDURST, 50)
             player:addTitle(xi.title.DOWN_PIPER_PIPE_UPPERER)
             player:needToZone(true)
             player:setCharVar('QuestWonderingMin_var', 0)

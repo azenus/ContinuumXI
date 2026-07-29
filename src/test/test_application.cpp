@@ -26,6 +26,8 @@
 
 #include <spdlog/async.h>
 
+#include <algorithm>
+#include <cstdlib>
 #include <string>
 
 namespace
@@ -85,6 +87,10 @@ auto appConfig() -> ApplicationConfig
                 .name        = "--output",
                 .description = "Output file for test results. Use .json extension for CTRF format.",
             },
+            ArgumentDefinition{
+                .name        = "--retry",
+                .description = "Re-run each failing test up to this many times; a test that then passes is reported as flaky.",
+            },
         },
     };
 }
@@ -105,7 +111,7 @@ auto TestApplication::createEngine() -> std::unique_ptr<Engine>
     return nullptr;
 }
 
-void TestApplication::run()
+auto TestApplication::run() -> bool
 {
     TracyZoneScoped;
 
@@ -145,12 +151,19 @@ void TestApplication::run()
             // Prepare TestEngine with MapEngine and WorldEngine
             //
 
+            size_t retryCount = 0;
+            if (const auto retryArg = args().present<std::string>("--retry"))
+            {
+                retryCount = static_cast<size_t>(std::max(0, std::atoi(retryArg->c_str())));
+            }
+
             TestConfig testConfig{
                 .loggerSink = sink_,
                 .verbose    = args().get<bool>("--verbose"),
                 .output     = args().present<std::string>("--output").value_or(""),
                 .keepGoing  = args().get<bool>("--keep-going"),
                 .watch      = args().get<bool>("--watch"),
+                .retryCount = retryCount,
                 .filters    = {
                     .includePatterns = args().get<std::vector<std::string>>("--file"),
                     .excludePatterns = args().get<std::vector<std::string>>("--no-file"),
@@ -167,12 +180,9 @@ void TestApplication::run()
             // Print to stderr directly if needed
             captureLogger();
 
-            auto success = co_await static_cast<TestEngine*>(engine_.get())->executeTests();
-            if (!success)
-            {
-                std::exit(EXIT_FAILURE);
-            }
-
+            // Record the result and exit through the normal path so main() can run
+            // lua_cleanup() before the process tears down.
+            success_ = co_await static_cast<TestEngine*>(engine_.get())->executeTests();
             this->requestExit();
         });
 
@@ -183,8 +193,10 @@ void TestApplication::run()
     catch (const std::exception& e)
     {
         ShowCriticalFmt("Fatal Exception: {}", e.what());
-        std::exit(EXIT_FAILURE);
+        success_ = false;
     }
+
+    return success_;
 }
 
 // Replace all loggers sinks with the in-memory sink

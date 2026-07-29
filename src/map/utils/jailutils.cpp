@@ -21,7 +21,6 @@
 
 #include "jailutils.h"
 
-#include "conquest_system.h"
 #include "entities/char_entity.h"
 
 #include "ai/ai_container.h"
@@ -34,7 +33,7 @@ auto InPrison(const CCharEntity* PChar) -> bool
 {
     TracyZoneScoped;
 
-    return PChar->m_GMlevel == 0 && PChar->getZone() == ZONE_MORDION_GAOL;
+    return PChar->m_GMlevel == 0 && PChar->getZone() == xi::ZoneId::MordionGaol;
 }
 
 void Add(CCharEntity* PChar)

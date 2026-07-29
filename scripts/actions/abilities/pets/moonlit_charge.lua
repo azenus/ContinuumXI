@@ -18,7 +18,7 @@ abilityObject.onPetAbility = function(target, pet, petskill, summoner, action)
     params.baseDamage        = pet:getWeaponDmg()
     params.numHits           = 1
     params.fTP               = { 1.0, 1.0, 1.0 }
-    params.fTPSubsequentHits = { 3.0, 3.0, 3.0 }
+    params.fTPSubsequentHits = { 1.0, 1.0, 1.0 }
     params.vit_wSC           = 0.30
     params.attackType        = xi.attackType.PHYSICAL
     params.damageType        = xi.damageType.BLUNT
@@ -34,7 +34,7 @@ abilityObject.onPetAbility = function(target, pet, petskill, summoner, action)
 
         local effectTable =
         {
-            [1] = { effectId = xi.effect.BLINDNESS, power = 25, duration = 60, origin = pet },
+            [1] = { effectId = xi.effect.BLINDNESS, power = 25, duration = 60 },
         }
 
         xi.combat.action.executeMobskillStatusEffect(pet, target, petskill, effectTable, { messageBypass = true })

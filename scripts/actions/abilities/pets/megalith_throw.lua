@@ -18,7 +18,7 @@ abilityObject.onPetAbility = function(target, pet, petskill, summoner, action)
     params.baseDamage        = pet:getRangedDmg()
     params.numHits           = 1
     params.fTP               = { 2.375, 2.375, 2.375 }
-    params.fTPSubsequentHits = { 3.000, 3.000, 3.000 }
+    params.fTPSubsequentHits = { 2.375, 2.375, 2.375 }
     params.str_wSC           = 0.20
     params.agi_wSC           = 0.20
     params.skipParry         = true
@@ -37,7 +37,7 @@ abilityObject.onPetAbility = function(target, pet, petskill, summoner, action)
 
         local effectTable =
         {
-            [1] = { effectId = xi.effect.SLOW, power = 3000, duration = 120, tier = 8, origin = pet }, -- TODO: Capture Slow tier
+            [1] = { effectId = xi.effect.SLOW, power = 3000, duration = 120, tier = 8 }, -- TODO: Capture Slow tier
         }
 
         xi.combat.action.executeMobskillStatusEffect(pet, target, petskill, effectTable, { messageBypass = true })

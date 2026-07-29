@@ -100,7 +100,7 @@ HTTPServer::HTTPServer(Scheduler& scheduler)
                 {
                     auto   maybeZoneId = req.matches[1].str();
                     uint16 zoneId      = std::strtol(maybeZoneId.c_str(), nullptr, 10);
-                    if (zoneId && zoneId < ZONEID::MAX_ZONEID)
+                    if (zoneId && zoneId < MAX_ZONEID)
                     {
                         LockingUpdate();
                         apiDataCache_.read(
@@ -144,8 +144,8 @@ HTTPServer::HTTPServer(Scheduler& scheduler)
                                 }
                             }
 
-                            std::visit(
-                                xi::overload{
+                            variant.visit(
+                                overload{
                                     [&](const bool& arg)
                                     {
                                         j[key] = arg;
@@ -159,8 +159,7 @@ HTTPServer::HTTPServer(Scheduler& scheduler)
                                         // JSON can't handle non-ASCII characters, so strip them out
                                         j[key] = utils::toASCII(arg, '?');
                                     },
-                                },
-                                variant);
+                                });
                         });
 
                     res.set_content(j.dump(), "application/json");

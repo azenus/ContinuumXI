@@ -21,7 +21,6 @@
 
 #include "map_networking.h"
 
-#include <common/arguments.h>
 #include <common/md52.h>
 #include <common/tracy.h>
 #include <common/zlib.h>
@@ -34,18 +33,13 @@
 #include "utils/charutils.h"
 
 #include "ipc_client.h"
-#include "job_points.h"
 #include "latent_effect_container.h"
-#include "map_engine.h"
 #include "map_session.h"
 #include "map_statistics.h"
-#include "roe.h"
-#include "status_effect_container.h"
-#include "transport.h"
 #include "zone.h"
 #include "zone_entities.h"
 
-extern std::map<uint16, CZone*> g_PZoneList; // Global array of pointers for zones
+extern std::map<xi::ZoneId, CZone*> g_PZoneList; // Global array of pointers for zones
 
 MapNetworking::MapNetworking(Scheduler& scheduler, MapStatistics& mapStatistics, MapConfig config)
 : scheduler_(scheduler)
@@ -69,7 +63,7 @@ MapNetworking::MapNetworking(Scheduler& scheduler, MapStatistics& mapStatistics,
     try
     {
         const auto udpPort = mapIPP_.getPort() == 0 ? settings::get<uint16>("network.MAP_PORT") : mapIPP_.getPort();
-        socket_            = std::make_unique<MapSocket>(scheduler_, udpPort, std::bind(&MapNetworking::handle_incoming_packet, this, std::placeholders::_1, std::placeholders::_2));
+        socket_            = std::make_unique<MapSocket>(scheduler_, mapStatistics_, udpPort, std::bind(&MapNetworking::handle_incoming_packet, this, std::placeholders::_1, std::placeholders::_2));
     }
     catch (const std::exception& e)
     {
@@ -285,7 +279,11 @@ int32 MapNetworking::recv_parse(uint8* buff, size_t* buffsize, MapSession* PSess
 
             std::ignore = langID;
 
-            auto rset = db::preparedStmt("SELECT accid FROM chars WHERE charid = ? LIMIT 1", packetCharID);
+            auto rset = db::preparedStmt("SELECT c.accid, s.session_key "
+                                         "FROM chars c "
+                                         "LEFT JOIN accounts_sessions s ON s.charid = c.charid "
+                                         "WHERE c.charid = ? LIMIT 1",
+                                         packetCharID);
             if (!rset || rset->rowsCount() == 0 || !rset->next())
             {
                 ShowError("recv_parse: Cannot load char %u (no such charid)", packetCharID);
@@ -294,8 +292,7 @@ int32 MapNetworking::recv_parse(uint8* buff, size_t* buffsize, MapSession* PSess
 
             accountID = rset->get<uint32>("accid");
 
-            rset = db::preparedStmt("SELECT session_key FROM accounts_sessions WHERE charid = ? LIMIT 1", packetCharID);
-            if (rset && rset->rowsCount() && rset->next())
+            if (!rset->isNull("session_key"))
             {
                 db::extractFromBlob(rset, "session_key", PSession->blowfish.key);
                 PSession->initBlowfish();
@@ -357,6 +354,13 @@ int32 MapNetworking::recv_parse(uint8* buff, size_t* buffsize, MapSession* PSess
             }
         }
 
+        // This is when a real decrypt of the current key hits.
+        // We gate this variable to allow no longer allow incoming 0x00As to be handled
+        if (decryptCount == 0)
+        {
+            PSession->hasDecryptedPacket = true;
+        }
+
         // reading data size
         uint32 PacketDataSize = ref<uint32>(buff, *buffsize - sizeof(int32) - 16);
 
@@ -403,7 +407,7 @@ int32 MapNetworking::parse(uint8* buff, size_t* buffsize, MapSession* PSession)
     {
         // Update the time we last got a char sync packet
         // The client can spam some other packets when trying to zone, preventing timely session deletions
-        PSession->last_update = timer::now();
+        PSession->tapLastUpdate();
     }
 
     for (uint8* SmallPD_ptr = PacketData_Begin; SmallPD_ptr + (ref<uint8>(SmallPD_ptr, 1) & 0xFE) * 2 <= PacketData_End && (ref<uint8>(SmallPD_ptr, 1) & 0xFE);
@@ -538,8 +542,19 @@ int32 MapNetworking::send_parse(uint8* buff, size_t* buffsize, MapSession* PSess
 
                     incrementKeyAfterEncrypt = true;
 
-                    // Set client port to zero, indicating the client tried to zone out and no longer has a port until the next 0x00A
-                    db::preparedStmt("UPDATE accounts_sessions SET client_port = 0, last_zoneout_time = NOW() WHERE charid = ?", PSession->charID);
+                    if (PSession->zone_type != GP_GAME_LOGOUT_STATE::LOGOUT)
+                    {
+                        auto ip   = PSession->zone_ipp.getIP();
+                        auto port = PSession->zone_ipp.getPort();
+
+                        // Set client port to zero, indicating the client tried to zone out and no longer has a port until the next 0x00A
+                        db::preparedStmt("UPDATE accounts_sessions SET server_addr = ?, server_port = ?, client_port = 0, last_zoneout_time = NOW() WHERE charid = ?", ip, port, PSession->charID);
+                    }
+                    else
+                    {
+                        // This probably isn't necessary - the session should be deleted shortly.
+                        db::preparedStmt("UPDATE accounts_sessions SET client_port = 0, last_zoneout_time = NOW() WHERE charid = ?", PSession->charID);
+                    }
                 }
 
                 std::memcpy(buff + *buffsize, *PSmallPacket, PSmallPacket->getSize());
@@ -721,7 +736,7 @@ void MapNetworking::flushStatistics()
 
     for (auto& [id, PZone] : g_PZoneList)
     {
-        if (PZone->IsZoneActive())
+        if (!PZone->GetZoneEntities()->CharListEmpty())
         {
             activeZoneCount += 1;
             playerCount += PZone->GetZoneEntities()->GetCharList().size();
@@ -741,6 +756,12 @@ void MapNetworking::flushStatistics()
                              : 0.0;
 
     mapStatistics_.set(MapStatistics::Key::DynamicTargIdUsagePercent, static_cast<int64>(percent));
+
+    // Null on test servers, which don't open a socket
+    if (socket_)
+    {
+        socket_->flushDiagnostics();
+    }
 
     // This also zeroes out all the stats
     mapStatistics_.flush();
