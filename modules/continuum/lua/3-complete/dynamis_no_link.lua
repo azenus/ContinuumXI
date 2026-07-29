@@ -7,7 +7,7 @@
 -----------------------------------
 require('modules/module_utils')
 -----------------------------------
-local m = Module:new('c-m_dynamis_no_link')
+local m = Module:new('c_dynamis_no_link')
 
 local regularRespawn  = 600  -- default respawn for regular Dynamis trash (seconds)
 local extendedRespawn = 3600 -- desired respawn for regular Dynamis trash (1 hour)

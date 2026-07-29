@@ -13,7 +13,7 @@
 -- Examiner Spawner    !pos -20 0.5 -60 194 (Outer Horutoto Ruins)
 -- Research Notes      !pos 110 -2 120 239 (Windurst Walls)
 -----------------------------------
-local m = Module:new('a-q_shan2_cipher')
+local m = Module:new('b-q_shan2_cipher')
 
 local info =
 {
