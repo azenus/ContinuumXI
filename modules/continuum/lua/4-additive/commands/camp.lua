@@ -1,3 +1,8 @@
+-----------------------------------
+-- func: camp
+-----------------------------------
+require('modules/module_utils')
+-----------------------------------
 ---@type TCommand
 local commandObj = {}
 
@@ -12,13 +17,13 @@ local useCooldown = false
 
 -- Table of camp coordinates by camp ID
 local campCoordinates = {
-    [1] = {x = 913.84, y = -324.19, z = -0.30, zoneId = 103}, -- Dunes Lizards
-    [2] = {x = -40.59, y = 261.74, z = -19.83, zoneId = 126}, -- Qufim H7
-    [3] = {x = 368.28, y = -21.83, z = -32.37, zoneId = 197}, -- Crawlers Nest K7
-    [4] = {x = -380.03, y = 393.75, z = -12.0, zoneId = 200},  -- Garlaige Citidel
-    [5] = {x = -21.14, y = 6.10, z = 0.07, zoneId = 167}, -- Bostaunieux Oubliette
-    [6] = {x = -20.48, y = -239.75, z = -20.0, zoneId = 174}, -- 174	Kuftal Tunnel
-  
+    [1] = { x = 913.84, y = -324.19, z = -0.30, zoneId = 103 }, -- Dunes Lizards
+    [2] = { x = -40.59, y = 261.74, z = -19.83, zoneId = 126 }, -- Qufim H7
+    [3] = { x = 368.28, y = -21.83, z = -32.37, zoneId = 197 }, -- Crawlers Nest K7
+    [4] = { x = -380.03, y = 393.75, z = -12.0, zoneId = 200 },  -- Garlaige Citidel
+    [5] = { x = -21.14, y = 6.10, z = 0.07, zoneId = 167 }, -- Bostaunieux Oubliette
+    [6] = { x = -20.48, y = -239.75, z = -20.0, zoneId = 174 }, -- 174 Kuftal Tunnel
+
     -- Add more camps as needed
 }
 
@@ -40,7 +45,6 @@ local teleportToCamp = function(player, camp)
     end)
 end
 
-
 -- Command trigger
 commandObj.onTrigger = function(player, campId)
     -- Validate input
@@ -50,7 +54,7 @@ commandObj.onTrigger = function(player, campId)
     end
 
     local playerId = player:getID()
-    local currentTime = os.time()
+    local currentTime = GetSystemTime()
 
     -- Check cooldown if enabled
     if useCooldown then
@@ -71,4 +75,4 @@ commandObj.onTrigger = function(player, campId)
     teleportToCamp(player, camp)
 end
 
-return commandObj
+xi.module.registerCommand('camp', commandObj)

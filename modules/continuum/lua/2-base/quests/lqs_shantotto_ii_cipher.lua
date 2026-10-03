@@ -64,12 +64,12 @@ LQS.add(m, {
                 pos     = { 420.0106, -10.5000, 743.2542, 0 },
                 default = LQS.NOTHING,
             },
-            -- Combat challenge mob (uses Queen_of_Swords cardian as base)
+            -- Combat challenge mob (uses Biune_Thunder_Elemental as base: zone 189, group 14)
             {
                 name  = shantottosExaminer,
                 type  = xi.objType.MOB,
                 pos   = { 420.0106, -10.5000, 743.2542, 0 },
-                base  = { 194, 64 },
+                base  = { 189, 14 },
                 level = 75,
             },
         },
