@@ -22,6 +22,7 @@
 #pragma once
 
 #include "aman.h"
+#include "enums/char_persist.h"
 #include "event_info.h"
 #include "gmcall_container.h"
 #include "inventory_sync_state.h"
@@ -40,18 +41,16 @@
 #include <common/types/maybe.h>
 
 #include <array>
-#include <bitset>
 #include <deque>
-#include <map>
 #include <memory>
-#include <set>
 #include <unordered_set>
 
-#include "automaton_entity.h"
+#include "persist_batch.h"
+
+#include "ai/states/death_state.h"
 #include "battle_entity.h"
 #include "linkshell.h"
 #include "maze.h"
-#include "packets/s2c/base.h"
 #include "pet_entity.h"
 
 #include <map/entities/types/automaton_info.h>
@@ -64,10 +63,9 @@
 #define MAX_MISSIONID    851
 #define MAX_ABYSSEAZONES 9
 
-#define TIME_BETWEEN_PERSIST 2min
-
 class CItemWeapon;
 class CTrustEntity;
+class PlayerTradeTransaction;
 
 struct jobs_t
 {
@@ -75,6 +73,25 @@ struct jobs_t
     uint8  job[MAX_JOBTYPE]; // the current levels of each of the jobs from above
     uint16 exp[MAX_JOBTYPE]; // the experience points for each of the jobs above
     uint8  genkai;           // the maximum genkai level achieved
+};
+
+// Jeuno and Selbina/Rabao fame are derived
+struct Fame
+{
+    uint16 Sandoria;
+    uint16 Bastok;
+    uint16 Windurst;
+    uint16 Norg;
+    uint16 AbysseaKonschtat;
+    uint16 AbysseaTahrongi;
+    uint16 AbysseaLaTheine;
+    uint16 AbysseaMisareaux;
+    uint16 AbysseaVunkerl;
+    uint16 AbysseaAttohwa;
+    uint16 AbysseaAltepa;
+    uint16 AbysseaGrauberg;
+    uint16 AbysseaUleguerand;
+    uint16 Adoulin;
 };
 
 struct profile_t
@@ -94,7 +111,7 @@ struct profile_t
     uint16 mhflag;
 
     uint16     title;
-    uint16     fame[15];
+    Fame       fame{};
     uint8      rank[3]; // RANK in three kingdoms
     uint16     rankpoints;
     location_t home_point;
@@ -171,6 +188,26 @@ struct UnlockedAttachments_t
     uint32 attachments[8];
 };
 
+// Chocobo raising state that outlives any one chocobo. Stored as a blob in char_pet.chocobo_user_data.
+struct ChocoboUserData_t
+{
+    uint32 fieldChocobo; // ChocoboCustomProperties of the registered chocobo, 0 when none
+    uint32 flags;
+    uint16 chocobosRaised;
+    uint8  registeredAbility1;
+    uint8  registeredAbility2;
+    uint8  registeredStrength;
+    uint8  registeredEndurance;
+    uint8  registeredDiscernment;
+    uint8  registeredReceptivity;
+    uint8  registeredWeather;
+    uint8  silksSpeedBonus; // Speed added while Purple Race Silks are worn
+    uint8  reserved[14];
+};
+
+// Saved as raw bytes; a new field must go in reserved or every stored blob loads shifted.
+static_assert(sizeof(ChocoboUserData_t) == 32);
+
 struct GearSetMod_t
 {
     uint8   setId;
@@ -221,11 +258,29 @@ enum CHAR_SUBSTATE
     SUBSTATE_LAST,
 };
 
-enum CHAR_PERSIST : uint8
+enum class PartyKind : uint8_t;
+
+struct PendingInvite
 {
-    EQUIP    = 0x01,
-    POSITION = 0x02,
-    EFFECTS  = 0x04,
+    EntityId  entity{};
+    PartyKind kind{};
+
+    void clean()
+    {
+        *this = {};
+    }
+};
+
+struct PendingTrade
+{
+    EntityId          entity{};
+    timer::time_point invitedAt{};
+    bool              initiator{};
+
+    void clean()
+    {
+        *this = {};
+    }
 };
 
 enum class WarpRequest : uint8
@@ -374,10 +429,10 @@ public:
 
     std::array<uint8, 20> m_SetBlueSpells{}; // The 0x200 offsetted blue magic spell IDs which the user has set. (1 byte per spell)
 
-    uint32 m_FieldChocobo{};
-    uint8  m_mountId{}; // Do not reset to 0. Only update when the mount changes.
-    uint32 m_claimedDeeds[5]{};
-    uint32 m_uniqueEvents[5]{};
+    ChocoboUserData_t m_chocoboUserData{};
+    uint8             m_mountId{}; // Do not reset to 0. Only update when the mount changes.
+    uint32            m_claimedDeeds[5]{};
+    uint32            m_uniqueEvents[5]{};
 
     // Store a copy of calculated stats to use when automaton is deactivated for the job info packet (automaton menu)
     AutomatonInfo automatonInfo_{};
@@ -454,6 +509,7 @@ public:
 
     WarpRequest requestedWarp       = WarpRequest::None; // see WarpRequest. This will be processed after the player's tick to warp.
     bool        requestedZoneChange = false;             // used in CLueBaseEntity::setPos(). This will be processed after the player's tick to change zones.
+    bool        arrivedByZoning     = false;             // set from char_stats.zoning by LoadChar, read by the 0x00A handler once the char is in its zone.
 
     uint8 GetGender();
 
@@ -524,21 +580,20 @@ public:
         return nullptr;
     }
 
-    // Only one transaction of each type may be active at a time. Aborts
-    // on null input or duplicate type.
+    // Only one transaction of each type may be active at a time. Null on a refused start or a duplicate.
     template <typename T>
     auto addTransaction(std::unique_ptr<T> transaction) -> T*
     {
         if (!transaction)
         {
             ShowErrorFmt("CCharEntity::addTransaction: null transaction of type {}", typeid(T).name());
-            std::abort();
+            return nullptr;
         }
 
         if (this->activeTransaction<T>())
         {
             ShowErrorFmt("CCharEntity::addTransaction: a transaction of type {} is already active", typeid(T).name());
-            std::abort();
+            return nullptr;
         }
 
         this->transactions_.push_back(std::move(transaction));
@@ -564,6 +619,12 @@ public:
         transactions_.clear();
     }
 
+    // The transaction is owned by the initiator
+    auto activePlayerTradeTransaction() const -> PlayerTradeTransaction*;
+
+    // Only valid when both sides' TradePending agree
+    auto tradePartner() const -> CCharEntity*;
+
     // TODO: All member instances of EntityID_t should be Maybe<EntityID_t> to allow for them not to be set,
     //     : instead of checking for entityId.id != 0, etc.
     // TODO: We don't want to replace this with just an ID, because in the future EntityID_t will be able to
@@ -579,11 +640,10 @@ public:
 
     void SetName(const std::string& name); // set the name of character, limited to 15 characters
 
-    timer::time_point lastTradeInvite{};
-    EntityId          TradePending{};    // Character ID offering trade
-    EntityId          InvitePending{};   // Character ID sending party invite
-    EntityId          BazaarID{};        // Pointer to the bazaar we are browsing.
-    BazaarList_t      BazaarCustomers{}; // Array holding the IDs of the current customers
+    PendingTrade  TradePending{};    // Set on both sides by a trade request
+    PendingInvite InvitePending{};   // Set on the invitee by a party invite
+    EntityId      BazaarID{};        // Pointer to the bazaar we are browsing.
+    BazaarList_t  BazaarCustomers{}; // Array holding the IDs of the current customers
 
     std::unique_ptr<monstrosity::MonstrosityData_t> m_PMonstrosity;
 
@@ -602,6 +662,7 @@ public:
     position_t m_ActionOffsetPos{}; // action offset position from the action packet(currently only used for repositioning of luopans)
 
     location_t m_previousLocation{};
+    float      m_lastMoveDistance{};
 
     uint32 m_PrevZonelineID; // The ID of the previous zoneline the player went through.
 
@@ -678,9 +739,10 @@ public:
     void ClearTrusts();
     void RemoveTrust(CTrustEntity*);
 
-    void RequestPersist(CHAR_PERSIST toPersist);
-    bool PersistData();
-    bool PersistData(timer::time_point tick);
+    auto persist() const -> CharPersist;
+    void setPersist(CharPersist toPersist);
+    void clearPersist(CharPersist toPersist);
+    void takeCharVarChanges(std::vector<CharVarChange>& out);
 
     auto Tick(timer::time_point) -> Task<void> override;
     void PostTick() override;
@@ -693,8 +755,11 @@ public:
     bool IsMobOwner(CBattleEntity* PTarget);
 
     void Die() override;
-    void Die(timer::duration _duration);
+    void Die(timer::duration _duration, DeathParams params = {});
     void Raise();
+
+    auto nextDeath() const -> const Maybe<DeathParams>&;
+    void setNextDeath(Maybe<DeathParams> params);
 
     static constexpr timer::duration death_duration         = 60min;
     static constexpr timer::duration death_update_frequency = 16s;
@@ -767,6 +832,8 @@ protected:
 private:
     auto applyTargetRestrictions(CBaseEntity* PResolved, uint16 validTargetFlags, std::unique_ptr<CBasicPacket>& errMsg) -> CBattleEntity*;
 
+    Maybe<DeathParams> nextDeath_;
+
     CCraftState                               craftState_{};
     std::vector<std::unique_ptr<Transaction>> transactions_;
 
@@ -808,8 +875,7 @@ private:
     std::unordered_set<std::string>                        charVarChanges;
     std::unordered_set<uint32>                             charTriggerAreaIDs; // Holds any TriggerArea IDs that the player is currently within the bounds of
 
-    uint8             dataToPersist = 0;
-    timer::time_point nextDataPersistTime{};
+    CharPersist persist_{};
 
     // TODO: Don't use raw ptrs for this, but don't duplicate whole packets with unique_ptr either.
     std::deque<std::unique_ptr<CBasicPacket>> PacketList;          // The list of packets to be sent to the character during the next network cycle

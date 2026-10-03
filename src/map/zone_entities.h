@@ -86,7 +86,8 @@ public:
 
     void FindPartyForMob(CBaseEntity* PEntity); // looking for a party for the monster
 
-    void TransportDepart(uint16 boundary, xi::ZoneId prevZoneId, uint16 transportId); // ship/boat is leaving, passengers need to be collected
+    void TransportDepart(uint16 boundary, xi::ZoneId prevZoneId, std::string_view transport); // a ship is leaving its dock, collect whoever is waiting in the boarding area
+    void DisembarkAll();                                                                      // the voyage zone is between runs, put whoever is still aboard ashore
 
     void WeatherChange(xi::Weather weather);
     void MusicChange(xi::MusicSlot slotId, uint16 trackId);
@@ -165,9 +166,6 @@ private:
 
     timer::time_point m_computeTime{ timer::now() };
     uint16            m_lastCharComputeTargId{ 0 };
-
-    timer::time_point m_charPersistTime{ timer::now() };
-    uint16            m_lastCharPersistTargId{ 0 };
 
     //
     // Intermediate collections for use inside ZoneServer

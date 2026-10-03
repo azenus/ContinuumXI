@@ -22,6 +22,7 @@
 #include "0x102_extended_job.h"
 
 #include "blue_spell.h"
+#include "entities/automaton_entity.h"
 #include "entities/char_entity.h"
 #include "packets/s2c/0x061_clistatus.h"
 #include "packets/s2c/0x0ac_command_data.h"
@@ -209,7 +210,7 @@ void GP_CLI_COMMAND_EXTENDED_JOB::process(MapSession* PSession, CCharEntity* PCh
         if (pupData.ItemId == 0x00)
         {
             // remove all attachments specified
-            for (uint8 i = 0; i < sizeof(pupData.Slots); i++)
+            for (uint8 i = static_cast<uint8>(AutomatonSlot::Attachment1); i < sizeof(pupData.Slots); i++)
             {
                 if (pupData.Slots[i] != 0)
                 {
@@ -230,7 +231,7 @@ void GP_CLI_COMMAND_EXTENDED_JOB::process(MapSession* PSession, CCharEntity* PCh
             }
             else
             {
-                for (uint8 i = 0; i < sizeof(pupData.Slots); i++)
+                for (uint8 i = static_cast<uint8>(AutomatonSlot::Attachment1); i < sizeof(pupData.Slots); i++)
                 {
                     if (pupData.Slots[i] != 0)
                     {

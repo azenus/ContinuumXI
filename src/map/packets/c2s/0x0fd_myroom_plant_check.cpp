@@ -37,6 +37,7 @@ auto GP_CLI_COMMAND_MYROOM_PLANT_CHECK::validate(MapSession* PSession, const CCh
 {
     return PacketValidator(PChar)
         .blockedBy({ BlockedState::InEvent })
+        .isInMogHouse()
         .mustNotEqual(this->MyroomPlantItemNo, 0, "MyroomPlantItemNo must not be 0")
         .oneOf("MyroomPlantCategory", this->MyroomPlantCategory, validPlantCategories);
 }
@@ -64,6 +65,12 @@ void GP_CLI_COMMAND_MYROOM_PLANT_CHECK::process(MapSession* PSession, CCharEntit
                                     this->MyroomPlantCategory,
                                     this->MyroomPlantItemIndex));
         }
+        return;
+    }
+
+    if (!PPotItem->isInstalled())
+    {
+        ShowWarningFmt("GP_CLI_COMMAND_MYROOM_PLANT_CHECK: {} tried to interact with an uninstalled flowerpot", PChar->getName());
         return;
     }
 

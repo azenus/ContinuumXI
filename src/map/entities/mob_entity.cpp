@@ -29,7 +29,9 @@
 #include "battlefield.h"
 #include "common/timer.h"
 #include "common/utils.h"
+#include "common/xirand.h"
 #include "conquest_system.h"
+#include "data/enums/detects.h"
 #include "data/enums/mob_mod.h"
 #include "data/enums/weather.h"
 #include "enmity_container.h"
@@ -42,6 +44,7 @@
 #include "packets/pet_sync.h"
 #include "packets/s2c/0x029_battle_message.h"
 #include "recast_container.h"
+#include "roam_region.h"
 #include "roe.h"
 #include "spawn_slot.h"
 #include "status_effect_container.h"
@@ -53,6 +56,8 @@
 #include "utils/mobutils.h"
 #include "utils/petutils.h"
 #include "utils/zoneutils.h"
+
+#include <algorithm>
 
 namespace
 {
@@ -360,7 +365,58 @@ bool CMobEntity::CanRoamHome()
         return true;
     }
 
-    return distance(m_SpawnPoint, loc.p) < roam_home_distance;
+    // a mob that left its region does not walk back, it despawns and respawns somewhere inside
+    if (roamRegion_)
+    {
+        return false;
+    }
+
+    return DistanceFromHome() < roam_home_distance;
+}
+
+auto CMobEntity::GetRoamAnchor() const -> position_t
+{
+    // inside a region it wanders on from where it stands, so it covers the whole thing instead of a disc around one spot
+    if (roamRegion_)
+    {
+        return loc.p;
+    }
+
+    return m_SpawnPoint;
+}
+
+auto CMobEntity::roamRegion() const -> const RoamRegion*
+{
+    return roamRegion_;
+}
+
+void CMobEntity::setPatrolRoute(std::vector<position_t> route)
+{
+    patrolRoute_ = std::move(route);
+    if (!patrolRoute_.empty())
+    {
+        // enter the loop at a random waypoint
+        std::ranges::rotate(patrolRoute_, patrolRoute_.begin() + xirand::GetRandomNumber<size_t>(0, patrolRoute_.size()));
+        m_SpawnPoint = patrolRoute_.front();
+    }
+}
+
+void CMobEntity::setRoamRegions(std::vector<const RoamRegion*> regions)
+{
+    roamRegions_ = std::move(regions);
+
+    // a region has no leeway: its edge is the limit, so nothing outside counts as home
+    m_maxRoamDistance = 0.0f;
+}
+
+auto CMobEntity::DistanceFromHome() const -> float
+{
+    if (roamRegion_)
+    {
+        return roamRegion_->distanceOutside(loc.p);
+    }
+
+    return distance(loc.p, m_SpawnPoint);
 }
 
 bool CMobEntity::CanRoam()
@@ -460,12 +516,7 @@ bool CMobEntity::CanDeaggro() const
 
 bool CMobEntity::IsFarFromHome()
 {
-    return distance(loc.p, m_SpawnPoint) > m_maxRoamDistance;
-}
-
-bool CMobEntity::CanBeNeutral() const
-{
-    return !((m_Type & xi::MobType::Notorious) != xi::MobType::Normal);
+    return DistanceFromHome() > m_maxRoamDistance;
 }
 
 bool CMobEntity::shouldUseTPMove(uint16 tpThreshold)
@@ -602,33 +653,32 @@ bool CMobEntity::GetUntargetable() const
 
 void CMobEntity::PostTick()
 {
-    TracyZoneScoped;
+    TracyZoneScopedN("CMobEntity::PostTick");
 
     CBattleEntity::PostTick();
-    timer::time_point now = timer::now();
-    if (loc.zone && updatemask && now > m_nextUpdateTimer)
+
+    if (loc.zone && updatemask)
     {
-        m_nextUpdateTimer = now + 250ms;
-        loc.zone->UpdateEntityPacket(this, ENTITY_UPDATE, updatemask);
-
-        // If this mob is charmed, it should sync with its master
-        if (PMaster && PMaster->PPet == this && PMaster->objtype == TYPE_PC)
+        const auto now = timer::now();
+        if (now > m_nextUpdateTimer)
         {
-            ((CCharEntity*)PMaster)->pushPacket<CPetSyncPacket>((CCharEntity*)PMaster);
-        }
+            m_nextUpdateTimer = now + 250ms;
+            loc.zone->UpdateEntityPacket(this, ENTITY_UPDATE, updatemask);
 
-        updatemask = 0;
+            // If this mob is charmed, it should sync with its master
+            if (PMaster && PMaster->PPet == this && PMaster->objtype == TYPE_PC)
+            {
+                ((CCharEntity*)PMaster)->pushPacket<CPetSyncPacket>((CCharEntity*)PMaster);
+            }
+
+            updatemask = 0;
+        }
     }
 }
 
 float CMobEntity::GetRoamDistance()
 {
     return (float)getMobMod(xi::MobMod::RoamDistance);
-}
-
-float CMobEntity::GetRoamRate()
-{
-    return (float)getMobMod(xi::MobMod::RoamRate) / 10.0f;
 }
 
 float CMobEntity::GetRangedAttackRange()
@@ -641,7 +691,7 @@ float CMobEntity::GetRangedAttackRange()
 
 bool CMobEntity::ValidTarget(CBattleEntity* PInitiator, uint16 targetFlags)
 {
-    TracyZoneScoped;
+    TracyZoneScopedN("CMobEntity::ValidTarget");
 
     if (StatusEffectContainer->GetConfrontationEffect() != PInitiator->StatusEffectContainer->GetConfrontationEffect())
     {
@@ -676,7 +726,7 @@ bool CMobEntity::ValidTarget(CBattleEntity* PInitiator, uint16 targetFlags)
 
 void CMobEntity::Spawn()
 {
-    TracyZoneScoped;
+    TracyZoneScopedN("CMobEntity::Spawn");
 
     // Reset stolen item always for battlefields or only if HP was 0 (mob died)
     if ((this->m_Type & xi::MobType::Battlefield) != xi::MobType::Normal || health.hp == 0)
@@ -710,7 +760,23 @@ void CMobEntity::Spawn()
     mobutils::CalculateMobStats(this);
     mobutils::GetAvailableSpells(this);
 
-    // spawn somewhere around my point
+    // region mobs pick one of their regions and a fresh point in it every life, and m_SpawnPoint keeps it for the point-based checks
+    if (!roamRegions_.empty() && loc.zone)
+    {
+        roamRegion_ = xirand::GetRandomElement(roamRegions_);
+
+        if (const auto point = roamRegion_->randomPoint(loc.zone->navMesh()))
+        {
+            m_SpawnPoint.x = point->x;
+            m_SpawnPoint.y = point->y;
+            m_SpawnPoint.z = point->z;
+        }
+        else
+        {
+            ShowWarningFmt("Mob {} ({}): roam region has no walkable point to spawn on", name, id);
+        }
+    }
+
     loc.p = m_SpawnPoint;
 
     if ((m_roamFlags & xi::RoamFlag::Stealth) != xi::RoamFlag::None)
@@ -742,11 +808,37 @@ void CMobEntity::Spawn()
     {
         SetDespawnTime(std::chrono::seconds(getMobMod(xi::MobMod::IdleDespawn)));
     }
+
+    // A route replaces roaming: the mob walks its waypoints for as long as it is left alone.
+    if (!patrolRoute_.empty())
+    {
+        std::vector<pathpoint_t> waypoints;
+        waypoints.reserve(patrolRoute_.size());
+        for (const auto& point : patrolRoute_)
+        {
+            waypoints.push_back({ point, timer::duration::zero(), false });
+        }
+
+        if (PAI->PathFind->PathThrough(std::move(waypoints), PATHFLAG_PATROL))
+        {
+            PAI->PathFind->FollowPath(timer::now());
+        }
+
+        return;
+    }
+
+    // Roam immediately on spawn
+    const auto minTurns = static_cast<uint8>(getMobMod(xi::MobMod::RoamTurnsMin));
+    const auto maxTurns = static_cast<uint8>(getMobMod(xi::MobMod::RoamTurns));
+    if (CanRoam() && PAI->PathFind->RoamAround(GetRoamAnchor(), GetRoamDistance(), minTurns, maxTurns, m_roamFlags, roamRegion_))
+    {
+        PAI->PathFind->FollowPath(timer::now());
+    }
 }
 
 void CMobEntity::OnWeaponSkillFinished(CWeaponSkillState& state, action_t& action)
 {
-    TracyZoneScoped;
+    TracyZoneScopedN("CMobEntity::OnWeaponSkillFinished");
 
     CBattleEntity::OnWeaponSkillFinished(state, action);
 
@@ -772,6 +864,13 @@ void CMobEntity::DistributeRewards()
     {
         StatusEffectContainer->KillAllStatusEffect();
         PChar->m_charHistory.enemiesDefeated++;
+
+        // Add mob kill for Beastmen influence
+        if (PChar->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Signet) &&
+            loc.zone->GetRegionID() <= REGION_TYPE::TAVNAZIA)
+        {
+            conquest::AddMobKills(1, loc.zone->GetRegionID());
+        }
 
         // NOTE: this is called for all alliance / party members!
         luautils::OnMobDeath(this, PChar);
@@ -819,22 +918,39 @@ void CMobEntity::DistributeRewards()
 }
 
 // Return the list of seals that can drop based on the mob's level.
+// Each tier is exclusive, a mob only rolls between the seals of its own tier.
 // Rules:
 // - Mob  < 50: Beastmen's Seal
 // - Mob >= 50: Beastmen's Seal, Kindred's Seal
-// - Mob >= 70: Beastmen's Seal, Kindred's Seal, Kindred's Crest
-// - Mob >= 80: Beastmen's Seal, Kindred's Seal, Kindred's Crest, High Kindred's Crest
-// If Abyssea is not enabled, pool is limited to Beastmen's Seal and Kindred's Seal.
-auto CMobEntity::GetEligibleSeals() -> std::vector<uint16>
+// - Mob >= 70: Kindred's Seal, Kindred's Crest
+// - Mob >= 80: Kindred's Crest, High Kindred's Crest
+// - Mob >= 100: Kindred's Crest, High Kindred's Crest, Sacred Kindred's Crest
+auto CMobEntity::GetEligibleSeals() const -> std::vector<uint16>
 {
-    if (GetMLevel() >= 80 && luautils::IsContentEnabled("ABYSSEA"))
+    // Using Abyssea being enabled as a marker for """era""" servers to return the old bands.
+    if (!luautils::IsContentEnabled("ABYSSEA"))
     {
-        return { BEASTMENS_SEAL, KINDREDS_SEAL, KINDREDS_CREST, HIGH_KINDREDS_CREST };
+        if (GetMLevel() >= 50)
+        {
+            return { BEASTMENS_SEAL, KINDREDS_SEAL };
+        }
+
+        return { BEASTMENS_SEAL };
     }
 
-    if (GetMLevel() >= 70 && luautils::IsContentEnabled("ABYSSEA"))
+    if (GetMLevel() >= 100)
     {
-        return { BEASTMENS_SEAL, KINDREDS_SEAL, KINDREDS_CREST };
+        return { KINDREDS_CREST, HIGH_KINDREDS_CREST, SACRED_KINDREDS_CREST };
+    }
+
+    if (GetMLevel() >= 80)
+    {
+        return { KINDREDS_CREST, HIGH_KINDREDS_CREST };
+    }
+
+    if (GetMLevel() >= 70)
+    {
+        return { KINDREDS_SEAL, KINDREDS_CREST };
     }
 
     if (GetMLevel() >= 50)
@@ -923,6 +1039,16 @@ auto CMobEntity::GetEligibleGeodes() const -> std::vector<uint16>
     return {};
 }
 
+auto CMobEntity::dropList() const -> const DropList_t*
+{
+    if (m_DropList)
+    {
+        return m_DropList;
+    }
+
+    return itemutils::GetDropList(m_DropID);
+}
+
 void CMobEntity::DropItems(CCharEntity* PChar)
 {
     TracyZoneScoped;
@@ -983,14 +1109,14 @@ void CMobEntity::DropItems(CCharEntity* PChar)
         }
     };
 
-    DropList_t* dropList = itemutils::GetDropList(m_DropID);
+    const DropList_t* drops = dropList();
 
-    if (!getMobMod(xi::MobMod::NoDrops) && dropList != nullptr && (!dropList->Items.empty() || !dropList->Groups.empty() || PAI->EventHandler.hasListener("ITEM_DROPS")))
+    if (!getMobMod(xi::MobMod::NoDrops) && drops != nullptr && (!drops->Items.empty() || !drops->Groups.empty() || PAI->EventHandler.hasListener("ITEM_DROPS")))
     {
         // THLvl determines the drop rate.
         auto thDropRateFunction = lua["xi"]["combat"]["treasureHunter"]["getDropRate"];
 
-        LootContainer loot(dropList);
+        LootContainer loot(drops);
 
         PAI->EventHandler.triggerListener("ITEM_DROPS", this, &loot);
 
@@ -1049,14 +1175,17 @@ void CMobEntity::DropItems(CCharEntity* PChar)
     }
 
     xi::ZoneType zoneType  = zoneutils::GetZone(PChar->getZone())->GetTypeMask();
-    bool         validZone = !((this->m_Type & xi::MobType::Battlefield) != xi::MobType::Normal) && !((zoneType & xi::ZoneType::Dynamis) != xi::ZoneType::Unknown);
+    bool         validZone = !((this->m_Type & xi::MobType::Battlefield) != xi::MobType::Normal) && !((zoneType & xi::ZoneType::Dynamis) != xi::ZoneType::Unknown) && loc.zone->GetRegionID() != REGION_TYPE::LUMORIA;
 
     // Check if mob can drop seals -- mobmod to disable drops, zone type isnt battlefield/dynamis, mob is stronger than Too Weak, or mobmod for EXP bonus is -100 or lower (-100% exp)
     if (!getMobMod(xi::MobMod::NoDrops) && validZone && charutils::CheckMob(m_HiPCLvl, this) > EMobDifficulty::TooWeak && getMobMod(xi::MobMod::ExpBonus) > -100)
     {
+        // Seals, geodes and avatarites do not drop from notorious monsters. Crystals still do.
+        const bool isNotorious = (m_Type & xi::MobType::Notorious) != xi::MobType::Normal;
+
         // Check for seal drops
         // Only one type of seal can drop per mob
-        if (xirand::GetRandomNumber(100) < 20 && CanAddSpecial(LootRecastID::Seal))
+        if (!isNotorious && xirand::GetRandomNumber(100) < 20 && CanAddSpecial(LootRecastID::Seal))
         {
             const auto seals = GetEligibleSeals();
             AddItemToPool(seals[xirand::GetRandomNumber(seals.size())]);
@@ -1065,7 +1194,7 @@ void CMobEntity::DropItems(CCharEntity* PChar)
 
         // Check for geode/avatarites drops
         // Only one type of geode can drop per mob
-        if (xirand::GetRandomNumber(100) < 20 && CanAddSpecial(LootRecastID::Geode))
+        if (!isNotorious && xirand::GetRandomNumber(100) < 20 && CanAddSpecial(LootRecastID::Geode))
         {
             if (const auto geodes = GetEligibleGeodes(); !geodes.empty())
             {
@@ -1167,38 +1296,67 @@ void CMobEntity::DropItems(CCharEntity* PChar)
 
 bool CMobEntity::CanAttack(CBattleEntity* PTarget, std::unique_ptr<CBasicPacket>& errMsg)
 {
-    TracyZoneScoped;
+    TracyZoneScopedN("CMobEntity::CanAttack");
 
-    auto skill_list_id{ getMobMod(xi::MobMod::AttackSkillList) };
-    if (skill_list_id)
+    // prevent pets from attacking mobs that the PC master does not own
+    if (this->PMaster)
     {
-        auto attack_range{ GetMeleeRange(PTarget) };
-        auto skillList{ battleutils::GetMobSkillList(skill_list_id) };
-
-        if (!skillList.empty())
+        auto* PChar = dynamic_cast<CCharEntity*>(this->PMaster);
+        if (PChar && !PChar->IsMobOwner(PTarget))
         {
-            auto* skill{ battleutils::GetMobSkill(skillList.front()) };
-            if (skill)
-            {
-                attack_range = modelHitboxSize + skill->getDistance() + PTarget->modelHitboxSize;
-            }
+            errMsg = std::make_unique<GP_SERV_COMMAND_BATTLE_MESSAGE>(this, PTarget, 0, 0, MsgBasic::AlreadyClaimed);
+            PAI->Disengage();
+            return false;
         }
-
-        bool  autoAttackEnabled  = PAI->GetController()->IsAutoAttackEnabled();
-        float distanceFromTarget = distance(loc.p, PTarget->loc.p);
-        bool  tooFar             = distanceFromTarget > attack_range;
-
-        return !tooFar && autoAttackEnabled;
     }
-    else
+
+    // Refuse the attack while the navmesh route is far longer than the straight line, until we have walked the detour.
+    if (PAI->PathFind && PAI->PathFind->IsFollowingPath() && !PAI->PathFind->IsPathDirect())
     {
-        return CBattleEntity::CanAttack(PTarget, errMsg);
+        return false;
     }
+
+    const bool canAttackInRange = [&]() -> bool
+    {
+        auto skill_list_id{ getMobMod(xi::MobMod::AttackSkillList) };
+        if (skill_list_id)
+        {
+            auto attack_range{ GetMeleeRange(PTarget) };
+            auto skillList{ battleutils::GetMobSkillList(skill_list_id) };
+
+            if (!skillList.empty())
+            {
+                auto* skill{ battleutils::GetMobSkill(skillList.front()) };
+                if (skill)
+                {
+                    attack_range = modelHitboxSize + skill->getDistance() + PTarget->modelHitboxSize;
+                }
+            }
+
+            bool  autoAttackEnabled  = PAI->GetController()->IsAutoAttackEnabled();
+            float distanceFromTarget = distance(loc.p, PTarget->loc.p);
+            bool  tooFar             = distanceFromTarget > attack_range;
+
+            return !tooFar && autoAttackEnabled;
+        }
+        else
+        {
+            return CBattleEntity::CanAttack(PTarget, errMsg);
+        }
+    }();
+
+    // Refuse to swing without line of sight, so a mob against thin geometry cannot attack through it.
+    if (canAttackInRange && !CanSeeTarget(PTarget))
+    {
+        return false;
+    }
+
+    return canAttackInRange;
 }
 
 void CMobEntity::OnEngage(CAttackState& state)
 {
-    TracyZoneScoped;
+    TracyZoneScopedN("CMobEntity::OnEngage");
 
     CBattleEntity::OnEngage(state);
     luautils::OnMobEngage(this, state.target().resolve());
@@ -1265,7 +1423,7 @@ void CMobEntity::OnDespawn(CDespawnState& /*unused*/)
 
 void CMobEntity::Die()
 {
-    TracyZoneScoped;
+    TracyZoneScopedN("CMobEntity::Die");
 
     if (PBattlefield != nullptr)
     {
@@ -1312,7 +1470,7 @@ void CMobEntity::Die()
 
 void CMobEntity::OnDisengage(CAttackState& state)
 {
-    TracyZoneScoped;
+    TracyZoneScopedN("CMobEntity::OnDisengage");
 
     PAI->PathFind->Clear();
     PEnmityContainer->Clear();
@@ -1333,7 +1491,7 @@ void CMobEntity::OnDisengage(CAttackState& state)
 
 void CMobEntity::OnCastFinished(CMagicState& state, action_t& action)
 {
-    TracyZoneScoped;
+    TracyZoneScopedN("CMobEntity::OnCastFinished");
 
     CBattleEntity::OnCastFinished(state, action);
 
@@ -1348,7 +1506,7 @@ void CMobEntity::OnCastFinished(CMagicState& state, action_t& action)
 
 void CMobEntity::OnCastInterrupted(CMagicState& state, action_t& action, MsgBasic msg, bool blockedCast)
 {
-    TracyZoneScoped;
+    TracyZoneScopedN("CMobEntity::OnCastInterrupted");
 
     CBattleEntity::OnCastInterrupted(state, action, msg, blockedCast);
 
@@ -1361,7 +1519,7 @@ void CMobEntity::OnCastInterrupted(CMagicState& state, action_t& action, MsgBasi
 
 bool CMobEntity::OnAttack(CAttackState& state, action_t& action)
 {
-    TracyZoneScoped;
+    TracyZoneScopedN("CMobEntity::OnAttack");
 
     TapDeaggroTime();
 

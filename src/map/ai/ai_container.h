@@ -23,6 +23,7 @@
 
 #include <memory>
 #include <stack>
+#include <vector>
 
 #include "ai/controllers/controller.h"
 #include "entities/base_entity.h"
@@ -30,6 +31,7 @@
 #include "helpers/event_handler.h"
 #include "helpers/pathfind.h"
 #include "helpers/targetfind.h"
+#include "states/death_state.h"
 #include "states/state.h"
 
 class CBaseEntity;
@@ -75,7 +77,7 @@ public:
     auto Internal_PetSkill(const EntityId& target, uint16 abilityid) -> bool;
     auto Internal_Ability(const EntityId& target, uint16 abilityid) -> bool;
     auto Internal_RangedAttack(const EntityId& target) -> bool;
-    auto Internal_Die(timer::duration) -> bool;
+    auto Internal_Die(timer::duration, DeathParams params = {}) -> bool;
     auto Internal_UseItem(const EntityId& target, uint8 loc, uint8 slotid) -> bool;
     auto Internal_Despawn(bool instantDespawn = false) -> bool;
     auto Internal_Synth(xi::SkillType synthSkill) -> bool;
@@ -153,6 +155,12 @@ private:
     // Finish with the current state and resume the one suspended beneath it (or go idle).
     void resumeNextState();
 
+    // swap in the state beneath before Cleanup, so anything Cleanup enters stacks on the resumed state instead of being popped right back off.
+    void finishCurrentState(timer::time_point tick);
+
+    // park a finished state until the end of the tick; its Update/Cleanup frame may still be live further up the call stack.
+    void retire(std::unique_ptr<CState> state);
+
     auto stateCount() const -> size_t;
 
     // The state the entity is currently in (null == idle). It lives here rather than on
@@ -160,6 +168,9 @@ private:
     // holds the states suspended beneath it.
     std::unique_ptr<CState>             m_currentState;
     std::stack<std::unique_ptr<CState>> m_stateStack;
+
+    // retired states, freed at the end of Tick().
+    std::vector<std::unique_ptr<CState>> m_retiredStates;
 
     CAIActionQueue ActionQueue;
 };

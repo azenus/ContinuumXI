@@ -23,36 +23,20 @@
 
 #include "entities/char_entity.h"
 #include "enums/msg_std.h"
+#include "items/transactions/npc_trade.h"
 #include "lua/luautils.h"
 #include "packets/s2c/0x053_systemmes.h"
 #include "status_effect_container.h"
 #include "trade_container.h"
-#include "utils/synthutils.h"
+
+#include <algorithm>
+#include <array>
 
 namespace
 {
 
-const auto auditTrade = [](Scheduler& scheduler, CCharEntity* PChar, CBaseEntity* PNpc, uint32_t itemId, uint8_t quantity)
-{
-    if (settings::get<bool>("map.AUDIT_PLAYER_TRADES"))
-    {
-        const auto  sender       = PChar->id;
-        const auto& senderName   = PChar->getName();
-        const auto  receiver     = PNpc->id;
-        const auto& receiverName = PNpc->getName();
-
-        scheduler.postToWorkerThread(
-            [itemId, quantity, sender, senderName, receiver, receiverName]()
-            {
-                const auto tradeDate = earth_time::timestamp();
-                const auto query     = "INSERT INTO audit_trade(itemid, quantity, sender, sender_name, receiver, receiver_name, date) VALUES (?, ?, ?, ?, ?, ?, ?)";
-                if (!db::preparedStmt(query, itemId, quantity, sender, senderName, receiver, receiverName, tradeDate))
-                {
-                    ShowErrorFmt("Failed to log trade transaction (item: {}, quantity: {}, sender: {}, receiver: {}, date: {})", itemId, quantity, sender, receiver, tradeDate);
-                }
-            });
-    }
-};
+// 8 trade window slots plus gil
+constexpr uint8 MAX_TRADE_SLOTS = 9;
 
 } // namespace
 
@@ -60,7 +44,7 @@ auto GP_CLI_COMMAND_ITEM_TRANSFER::validate(MapSession* PSession, const CCharEnt
 {
     return PacketValidator(PChar)
         .blockedBy({ BlockedState::InEvent, BlockedState::Monstrosity })
-        .range("ItemNum", this->ItemNum, 1, 9);
+        .range("ItemNum", this->ItemNum, 1, MAX_TRADE_SLOTS);
 }
 
 void GP_CLI_COMMAND_ITEM_TRANSFER::process(MapSession* PSession, CCharEntity* PChar) const
@@ -88,42 +72,87 @@ void GP_CLI_COMMAND_ITEM_TRANSFER::process(MapSession* PSession, CCharEntity* PC
         return;
     }
 
+    // close any previous offer before this one replaces it
+    if (auto* previous = PChar->activeTransaction<NpcTradeTransaction>())
+    {
+        PChar->removeTransaction(previous);
+    }
+
     PChar->TradeContainer->Clean();
+
+    std::array<CItem*, MAX_TRADE_SLOTS> tradeItems{};
 
     for (int32 slotId = 0; slotId < this->ItemNum; ++slotId)
     {
         const uint8_t  invSlotId = this->PropertyItemIndexTbl[slotId];
         const uint32_t quantity  = this->ItemNumTbl[slotId];
 
+        if (quantity == 0)
+        {
+            ShowErrorFmt("GP_CLI_COMMAND_ITEM_TRANSFER: {} tried to trade NPC {} with zero quantity in slot {}!", PChar->getName(), PNpc->getName(), invSlotId);
+            return;
+        }
+
         CItem* PItem = PChar->getStorage(LOC_INVENTORY)->GetItem(invSlotId);
 
-        if (PItem == nullptr || PItem->getQuantity() < quantity)
+        if (!PItem)
         {
-            ShowErrorFmt("GP_CLI_COMMAND_ITEM_TRANSFER: {} trying to trade NPC {} with invalid item {} ({})!", PChar->getName(), PNpc->getName(), PItem->getName(), PItem->getID());
+            ShowErrorFmt("GP_CLI_COMMAND_ITEM_TRANSFER: {} trying to trade NPC {} with an empty inventory slot {}!", PChar->getName(), PNpc->getName(), invSlotId);
             return;
         }
 
-        if (PItem->getReserve() > 0)
+        if (PItem->getQuantity() < quantity)
         {
-            ShowErrorFmt("GP_CLI_COMMAND_ITEM_TRANSFER: {} trying to trade NPC {} with reserved item {} ({})!", PChar->getName(), PNpc->getName(), PItem->getName(), PItem->getID());
+            ShowErrorFmt("GP_CLI_COMMAND_ITEM_TRANSFER: {} trying to trade NPC {} with {} of item {} ({}) they do not have!", PChar->getName(), PNpc->getName(), quantity, PItem->getName(), PItem->getID());
             return;
         }
 
-        if (PItem->isSubType(ITEM_LOCKED))
+        if (std::find(tradeItems.begin(), tradeItems.begin() + slotId, PItem) != tradeItems.begin() + slotId)
+        {
+            ShowErrorFmt("GP_CLI_COMMAND_ITEM_TRANSFER: {} trying to trade NPC {} with duplicate inventory slot {}!", PChar->getName(), PNpc->getName(), invSlotId);
+            return;
+        }
+
+        if (PItem->isBusy())
         {
             ShowErrorFmt("GP_CLI_COMMAND_ITEM_TRANSFER: {} trying to trade NPC {} with locked item {} ({})!", PChar->getName(), PNpc->getName(), PItem->getName(), PItem->getID());
             return;
         }
 
-        // TODO: Don't pass around Scheduler& through PSession
-        auditTrade(*PSession->scheduler, PChar, PNpc, PItem->getID(), quantity);
+        tradeItems[slotId] = PItem;
+    }
 
-        PItem->setReserve(quantity);
-        PChar->TradeContainer->setItem(slotId, PItem->getID(), invSlotId, quantity, PItem);
+    auto* transaction = PChar->addTransaction(NpcTradeTransaction::start(PChar, PNpc));
+    if (!transaction)
+    {
+        return;
+    }
+
+    for (int32 slotId = 0; slotId < this->ItemNum; ++slotId)
+    {
+        CItem*         PItem    = tradeItems[slotId];
+        const uint32_t quantity = this->ItemNumTbl[slotId];
+
+        if (!transaction->stage(static_cast<uint8>(slotId), PItem, quantity))
+        {
+            ShowErrorFmt("GP_CLI_COMMAND_ITEM_TRANSFER: {} could not offer item {} ({}) to NPC {}", PChar->getName(), PItem->getName(), PItem->getID(), PNpc->getName());
+            PChar->removeTransaction(transaction);
+            PChar->TradeContainer->Clean();
+
+            return;
+        }
+
+        PChar->TradeContainer->setItem(slotId, PItem->getID(), PItem->getSlotID(), quantity);
     }
 
     luautils::OnTrade(PChar, PNpc);
-    PChar->TradeContainer->unreserveUnconfirmed();
+
+    // looked up again rather than reused: a script can finish the trade from onTrade, which destroys the transaction
+    if (auto* offer = PChar->activeTransaction<NpcTradeTransaction>())
+    {
+        offer->releaseUnconfirmed();
+    }
+
     if (PChar->isInEvent())
     {
         // Retail accurate: If the trade started an event then any current synth is a crit fail.

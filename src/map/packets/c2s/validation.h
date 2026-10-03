@@ -35,8 +35,14 @@
 
 #include <fmt/ranges.h>
 
-enum LSTYPE : std::uint8_t;
+namespace xi
+{
+
 enum class KeyItem : uint16_t;
+
+}
+
+enum LSTYPE : std::uint8_t;
 class CCharEntity;
 
 class PacketValidationResult
@@ -226,6 +232,8 @@ public:
     auto hasLinkshellRank(uint8_t slot, LSTYPE rank) -> PacketValidator&;
     // Character zone must allow specified flag. GMs can bypass this check.
     auto hasZoneMiscFlag(xi::ZoneMisc flag) -> PacketValidator&;
+    // Container id must be one getStorage() can resolve. Does not imply access; use oneOf with an explicit set for that.
+    auto isValidContainer(const std::string& fieldName, uint32 containerId) -> PacketValidator&;
     // Character must be the party leader
     auto isPartyLeader() -> PacketValidator&;
     // Character must be the alliance leader
@@ -235,7 +243,7 @@ public:
     // Character must be in Mog House
     auto isInMogHouse() -> PacketValidator&;
     // Character must have a specific key item
-    auto hasKeyItem(KeyItem keyItemId) -> PacketValidator&;
+    auto hasKeyItem(xi::KeyItem keyItemId) -> PacketValidator&;
     // The previous packet received from this character must match the expected packet ID
     auto requiresPriorPacket(PacketC2S expectedPacketId) -> PacketValidator&;
 

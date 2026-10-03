@@ -34,6 +34,11 @@ CPlayerCharmController::CPlayerCharmController(CCharEntity* PChar)
 
 CPlayerCharmController::~CPlayerCharmController()
 {
+    if (!POwner->PAI)
+    {
+        return;
+    }
+
     if (POwner->PAI->IsEngaged())
     {
         POwner->PAI->Internal_Disengage();
@@ -84,7 +89,7 @@ void CPlayerCharmController::DoCombatTick(timer::time_point tick) const
             {
                 if (POwner->GetSpeed() > 0)
                 {
-                    POwner->PAI->PathFind->PathAround(PTarget->loc.p, 2.0f, PATHFLAG_WALLHACK | PATHFLAG_RUN);
+                    POwner->PAI->PathFind->PathAround(PTarget->loc.p, 2.0f, PATHFLAG_RUN);
                     POwner->PAI->PathFind->FollowPath(m_Tick);
                 }
             }
@@ -105,7 +110,7 @@ void CPlayerCharmController::DoRoamTick(timer::time_point tick) const
     {
         if (POwner->PAI->PathFind)
         {
-            if (currentDistance < 35.0f && POwner->PAI->PathFind->PathAround(POwner->PMaster->loc.p, 2.0f, PATHFLAG_RUN | PATHFLAG_WALLHACK))
+            if (currentDistance < 35.0f && POwner->PAI->PathFind->PathAround(POwner->PMaster->loc.p, 2.0f, PATHFLAG_RUN))
             {
                 POwner->PAI->PathFind->FollowPath(m_Tick);
             }

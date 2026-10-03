@@ -99,6 +99,13 @@ const auto equipLinkshell = [](CCharEntity* PChar, CItemLinkshell* PItemLinkshel
         oldLinkshell = PChar->PLinkshell2;
     }
 
+    if (PItemLinkshell->GetLSType() == LSTYPE_BROKEN)
+    {
+        PChar->pushPacket<GP_SERV_COMMAND_MESSAGE>(MsgStd::LinkshellNoLongerExists);
+
+        return;
+    }
+
     // If the linkshell has been broken, break the item
     const auto rset = db::preparedStmt("SELECT broken FROM linkshells WHERE linkshellid = ? LIMIT 1", PItemLinkshell->GetLSID());
     if (rset && rset->rowsCount() && rset->next() && rset->get<uint8>("broken") == 1)
@@ -134,18 +141,15 @@ const auto equipLinkshell = [](CCharEntity* PChar, CItemLinkshell* PItemLinkshel
         {
             linkshell::DelOnlineMember(PChar, POldItemLinkshell);
 
-            POldItemLinkshell->setSubType(ITEM_UNLOCKED);
             PChar->pushPacket<GP_SERV_COMMAND_ITEM_LIST>(POldItemLinkshell, ItemLockFlg::Normal);
         }
     }
 
     // Now equip the new linkshell
     linkshell::AddOnlineMember(PChar, PItemLinkshell, data.LinkshellId);
-    PItemLinkshell->setSubType(ITEM_LOCKED);
     if (!PChar->bindEquip(SLOT_BACK + data.LinkshellId, PItemLinkshell))
     {
         linkshell::DelOnlineMember(PChar, PItemLinkshell);
-        PItemLinkshell->setSubType(ITEM_UNLOCKED);
         return;
     }
 
@@ -165,7 +169,6 @@ const auto equipLinkshell = [](CCharEntity* PChar, CItemLinkshell* PItemLinkshel
 const auto unequipLinkshell = [](CCharEntity* PChar, CItemLinkshell* PItemLinkshell, const GP_CLI_COMMAND_GROUP_COMLINK_ACTIVE& data)
 {
     linkshell::DelOnlineMember(PChar, PItemLinkshell);
-    PItemLinkshell->setSubType(ITEM_UNLOCKED);
     PChar->clearEquip(SLOT_BACK + data.LinkshellId);
     if (data.LinkshellId == 1)
     {
@@ -191,7 +194,8 @@ auto GP_CLI_COMMAND_GROUP_COMLINK_ACTIVE::validate(MapSession* PSession, const C
         .range("b", this->b, 0, 15)
         .mustEqual(this->a, 15, "a not 15")
         .oneOf<GP_CLI_COMMAND_GROUP_COMLINK_ACTIVE_ACTIVEFLG>(this->ActiveFlg)
-        .oneOf<GP_CLI_COMMAND_GROUP_COMLINK_ACTIVE_LINKSHELLID>(this->LinkshellId);
+        .oneOf<GP_CLI_COMMAND_GROUP_COMLINK_ACTIVE_LINKSHELLID>(this->LinkshellId)
+        .isValidContainer("Category", this->Category);
 }
 
 void GP_CLI_COMMAND_GROUP_COMLINK_ACTIVE::process(MapSession* PSession, CCharEntity* PChar) const
@@ -209,6 +213,11 @@ void GP_CLI_COMMAND_GROUP_COMLINK_ACTIVE::process(MapSession* PSession, CCharEnt
         {
             if (PItemLinkshell->getID() == ITEMID::NEW_LINKSHELL)
             {
+                if (PItemLinkshell->isBusy())
+                {
+                    return;
+                }
+
                 // Case 1. New Linkshell, create it.
                 createLinkshell(PChar, PItemLinkshell, *this);
             }

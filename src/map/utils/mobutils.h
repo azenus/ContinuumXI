@@ -1,4 +1,4 @@
-﻿/*
+/*
 ===========================================================================
 
   Copyright (c) 2010-2015 Darkstar Dev Teams
@@ -22,9 +22,13 @@
 #pragma once
 
 #include "common/cbasetypes.h"
+#include "data/shared_types/mob_attributes/dataset.h"
 
 #include <common/types/hash_map.h>
 
+#include "data/datasets/ecosystems/dataset.h"
+#include "data/enums/ecosystem.h"
+#include "data/enums/family.h"
 #include "entities/mob_entity.h"
 #include "modifier.h"
 
@@ -53,6 +57,34 @@ typedef HashMap<uint32, ModsList_t*> ModsMap_t;
 namespace mobutils
 {
 
+// A species with the attributes of its family and ecosystem already folded in.
+struct SpeciesInfo
+{
+    xi::Ecosystem               Ecosystem{};
+    xi::Family                  Family{};
+    xi::data::MobAttributesData MobAttributes{};
+};
+
+template <class T>
+void ApplyStatRanks(T& out, const xi::data::StatRanksData& stats)
+{
+    out.strRank = static_cast<uint8>(stats.Str);
+    out.dexRank = static_cast<uint8>(stats.Dex);
+    out.vitRank = static_cast<uint8>(stats.Vit);
+    out.agiRank = static_cast<uint8>(stats.Agi);
+    out.intRank = static_cast<uint8>(stats.Int);
+    out.mndRank = static_cast<uint8>(stats.Mnd);
+    out.chrRank = static_cast<uint8>(stats.Chr);
+    out.defRank = static_cast<uint8>(stats.Def);
+    out.evaRank = static_cast<uint8>(stats.Eva);
+    out.attRank = static_cast<uint8>(stats.Att);
+    out.accRank = static_cast<uint8>(stats.Acc);
+}
+
+void LoadSpeciesData();
+auto GetSpeciesData(uint16 speciesId) -> const SpeciesInfo&;
+void ApplySpecies(CMobEntity* PMob);
+void ApplySpecies(CMobEntity* PMob, const xi::data::MobAttributesData& attributes);
 void CalculateMobStats(CMobEntity* PMob, bool recover = true);
 void SetupJob(CMobEntity* PMob);
 void SetupRoaming(CMobEntity* PMob);
@@ -75,8 +107,7 @@ void   InitializeMob(CMobEntity* PMob);
 void   LoadSqlModifiers();
 void   Cleanup();
 
-// get modifiers for species / pool / spawn
-ModsList_t* GetMobSpeciesMods(uint16 speciesId, bool create = false);
+// get modifiers for pool / spawn
 ModsList_t* GetMobPoolMods(uint32 poolId, bool create = false);
 ModsList_t* GetMobSpawnMods(uint32 mobId, bool create = false);
 
