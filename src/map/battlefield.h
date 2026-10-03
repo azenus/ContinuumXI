@@ -144,7 +144,6 @@ public:
     uint16                        GetRuleMask() const;
     timer::time_point             GetStartTime() const;
     timer::duration               GetTimeInside() const;
-    timer::time_point             GetFightTime() const;
     timer::duration               GetTimeLimit() const;
     timer::time_point             GetWipeTime() const;
     size_t                        GetMaxParticipants() const;
@@ -185,6 +184,9 @@ public:
     bool         InsertEntity(CBaseEntity* PEntity, bool inBattlefield = false, BATTLEFIELDMOBCONDITION conditions = CONDITION_NONE, bool ally = false);
     CBaseEntity* GetEntity(CBaseEntity* PEntity);
     bool         IsRegistered(CCharEntity* PChar);
+    bool         HasClearance(CCharEntity* PChar) const;
+    void         RemoveRegistration(CCharEntity* PChar);
+    void         GrantClearance(CCharEntity* PChar);
     bool         RemoveEntity(CBaseEntity* PEntity, uint8 leavecode = 0);
     void         onTick(timer::time_point time);
     bool         CanCleanup(bool cleanup = false);

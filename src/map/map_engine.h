@@ -21,8 +21,6 @@
 
 #pragma once
 
-#include "pch.h"
-
 #include <common/application.h>
 #include <common/ipp.h>
 #include <common/timer.h>
@@ -68,6 +66,8 @@ public:
     void sessionCleanup() const;
     void garbageCollect() const;
 
+    auto persistSweep() -> Task<void>;
+
     //
     // Commands callbacks
     //
@@ -95,9 +95,11 @@ private:
     Maybe<Scheduler::Token> mapCleanupToken_;
     Maybe<Scheduler::Token> mapGarbageCollectToken_;
     Maybe<Scheduler::Token> timeServerToken_;
+    Maybe<Scheduler::Token> transportToken_;
     Maybe<Scheduler::Token> persistVolatileServerVarsToken_;
     Maybe<Scheduler::Token> pumpIPCToken_;
     Maybe<Scheduler::Token> flushStatisticsToken_;
+    Maybe<Scheduler::Token> persistSweepToken_;
 
     std::unique_ptr<MapStatistics> mapStatistics_;
     std::unique_ptr<MapNetworking> networking_;

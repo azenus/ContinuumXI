@@ -20,8 +20,9 @@
 */
 
 #include "connect_application.h"
+#include "login_helpers.h"
 
-#include "cert_helpers.h"
+#include "common/cert_helpers.h"
 #include "common/console_service.h"
 #include "connect_engine.h"
 
@@ -48,6 +49,7 @@ ConnectApplication::~ConnectApplication() = default;
 auto ConnectApplication::createEngine() -> std::unique_ptr<Engine>
 {
     certificateHelpers::generateSelfSignedCert();
+    loginHelpers::loadZoneLookups();
     return std::make_unique<ConnectEngine>(scheduler_, zmqService_);
 }
 

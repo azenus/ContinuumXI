@@ -23,6 +23,7 @@
 
 #include <array>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 
 using namespace std::chrono_literals;
@@ -36,6 +37,9 @@ using namespace std::chrono_literals;
 //
 
 static constexpr auto kTimeServerTickInterval = 2400ms;
+
+// Ship and lift periods are not multiples of the time server tick, so 2400ms samples them too coarsely.
+static constexpr auto kTransportTickInterval = 400ms;
 
 // 2.5 logic updates per second
 static constexpr auto kLogicUpdateRate = 2.5f;
@@ -63,6 +67,9 @@ static constexpr auto kGarbageCollectionInterval = 15min;
 
 // The rate at which we persist any outstanding changes to volatile server vars
 static constexpr auto kPersistVolatileServerVarsInterval = 1min;
+
+// The rate at which we flush dirty characters to the database
+static constexpr auto kPersistSweepInterval = 5s;
 
 // The rate at which we pump the ZMQ queues
 static constexpr auto kIPCPumpInterval = 100ms;

@@ -5,7 +5,7 @@
 `navmeshes` are included in a separate image. You can load these into a volume with the following command:
 
 ```sh
-docker run --rm -v navmeshes:/navmeshes ghcr.io/landsandboat/ximeshes:latest
+docker run --rm -v navmeshes:/navmeshes -v ximeshes:/ximeshes ghcr.io/landsandboat/ximeshes:latest
 ```
 Once the volumes are created, you can delete the image.
 
@@ -114,13 +114,14 @@ x-common: &common
     # XI_{file}_{setting}: value
   volumes:
     - navmeshes:/server/navmeshes
+    - ximeshes:/server/ximeshes
     # - ./config.yaml:/server/tools/config.yaml
     # - ./map.lua:/server/settings/map.lua
     # - ./modules:/server/modules
 
 services:
   database:
-    image: mariadb:lts
+    image: mariadb:12.3
     restart: always
     command: ['--character-set-server=utf8mb4', '--collation-server=utf8mb4_general_ci']
     environment:
@@ -169,6 +170,20 @@ services:
       database-update:
         condition: service_completed_successfully
 
+  profile:
+    <<: *common
+    command: ["/server/xi_profile"]
+    restart: unless-stopped
+    ports:
+      - "51220:51220"
+      - "51240:51240"
+    depends_on:
+      database:
+        condition: service_healthy
+        restart: true
+      database-update:
+        condition: service_completed_successfully
+
   world:
     <<: *common
     command: ["/server/xi_world"]
@@ -201,6 +216,8 @@ volumes:
   database:
   navmeshes:
     external: true
+  ximeshes:
+    external: true
 ```
 
 ## Building the image
@@ -212,14 +229,14 @@ docker build -f docker/ubuntu.Dockerfile .
 The Dockerfiles support a few [build args](https://docs.docker.com/build/building/variables/#arg-usage-example), use these if you want to use a different compiler/version/user/etc:
 
 ```
-BASE_TAG=24.04
+BASE_TAG=26.04
 UNAME=xiadmin
 UGROUP=xiadmin
 UID=1000
 GID=1000
 COMPILER=gcc
-GCC_VERSION=14
-LLVM_VERSION=20
+GCC_VERSION=15
+LLVM_VERSION=22
 CMAKE_BUILD_TYPE=Release
 TRACY_ENABLE=OFF
 ENABLE_CLANG_TIDY=OFF

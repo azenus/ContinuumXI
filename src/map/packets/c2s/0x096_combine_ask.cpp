@@ -31,6 +31,8 @@
 #include "utils/jailutils.h"
 #include "utils/synthutils.h"
 
+#include <array>
+
 namespace
 {
 
@@ -91,40 +93,12 @@ void GP_CLI_COMMAND_COMBINE_ASK::process(MapSession* PSession, CCharEntity* PCha
         return;
     }
 
-    // NOTE: This section is intended to be temporary to ensure that duping shenanigans aren't possible.
-    // It should be replaced by something more robust or more stateful as soon as is reasonable
-    auto* PTarget = PChar->TradePending.resolve<CCharEntity>();
-
-    // Clear pending trades on synthesis start
-    if (PTarget && PChar->TradePending.UniqueNo == PTarget->id)
-    {
-        PChar->TradePending.clean();
-        PTarget->TradePending.clean();
-    }
-
-    // Clears out trade session and blocks synthesis at any point in trade process after accepting
-    // trade request.
     if (PChar->UContainer->GetType() != UCONTAINER_EMPTY)
     {
-        if (PTarget)
-        {
-            ShowDebug("%s trade request with %s was canceled because %s tried to craft.",
-                      PChar->getName(),
-                      PTarget->getName(),
-                      PChar->getName());
-
-            PTarget->TradePending.clean();
-            PTarget->UContainer->Clean();
-            PTarget->pushPacket<GP_SERV_COMMAND_ITEM_TRADE_RES>(PChar, GP_ITEM_TRADE_RES_KIND::Cancell);
-            PChar->pushPacket<GP_SERV_COMMAND_ITEM_TRADE_RES>(PTarget, GP_ITEM_TRADE_RES_KIND::Cancell);
-        }
-
         PChar->pushPacket<GP_SERV_COMMAND_MESSAGE>(MsgStd::CannotBeProcessed);
-        PChar->TradePending.clean();
         PChar->UContainer->Clean();
         return;
     }
-    // End temporary additions
 
     const auto* PItem = PChar->getStorage(LOC_INVENTORY)->GetItem(this->CrystalIdx);
     if (!PItem ||
@@ -137,7 +111,7 @@ void GP_CLI_COMMAND_COMBINE_ASK::process(MapSession* PSession, CCharEntity* PCha
         return;
     }
 
-    if (PItem->isBusy() || PItem->isSubType(ITEM_LOCKED))
+    if (PItem->isBusy())
     {
         ShowWarningFmt("GP_CLI_COMMAND_COMBINE_ASK: {} trying to use unavailable crystal", PChar->getName());
         PChar->pushPacket<GP_SERV_COMMAND_BATTLE_MESSAGE>(PChar, PChar, 0, 0, MsgBasic::CannotUseInArea);
@@ -145,10 +119,10 @@ void GP_CLI_COMMAND_COMBINE_ASK::process(MapSession* PSession, CCharEntity* PCha
     }
 
     SynthOffer offer{
-        .crystal = { this->Crystal, this->CrystalIdx },
+        .crystal = { .itemId = this->Crystal, .invSlot = this->CrystalIdx },
     };
 
-    std::vector<uint8> slotQty(MAX_CONTAINER_SIZE);
+    std::array<uint8, 256> slotQty{};
     for (int32 slotId = 0; slotId < this->Items; ++slotId)
     {
         const uint16 itemId    = this->ItemNo[slotId];
@@ -163,14 +137,14 @@ void GP_CLI_COMMAND_COMBINE_ASK::process(MapSession* PSession, CCharEntity* PCha
             continue;
         }
 
-        if (PSlotItem->isBusy() || PSlotItem->isSubType(ITEM_LOCKED) ||
+        if (PSlotItem->isBusy() ||
             slotQty[invSlotId] > PSlotItem->getQuantity())
         {
             ShowWarningFmt("GP_CLI_COMMAND_COMBINE_ASK: {} trying to use unavailable ingredient", PChar->getName());
             continue;
         }
 
-        offer.ingredients[slotId] = { itemId, invSlotId };
+        offer.ingredients[slotId] = { .itemId = itemId, .invSlot = invSlotId };
     }
 
     synthutils::startSynth(PChar, offer);

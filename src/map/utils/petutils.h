@@ -181,6 +181,7 @@ struct Pet_t
     float HPscale; // HP boost percentage
     float MPscale; // MP boost percentage
 
+    xi::SkillType  cmbSkill;
     uint16         cmbDelay;
     xi::DamageType m_dmgType;
     uint8          speed;
@@ -251,8 +252,9 @@ struct Pet_t
     , mJob(0)
     , sJob(0)
     , m_Element(0)
-    , HPscale(0.f)
-    , MPscale(0.f)
+    , HPscale(1.f)
+    , MPscale(1.f)
+    , cmbSkill(xi::SkillType::None)
     , cmbDelay(0)
     , m_dmgType(xi::DamageType::None)
     , speed(0)
@@ -314,16 +316,15 @@ namespace petutils
 void LoadPetList();
 void FreePetList();
 
-void   SpawnPet(CBattleEntity* PMaster, uint32 PetID, bool spawningFromZone);
-void   SpawnMobPet(CBattleEntity* PMaster, uint32 PetID);
-void   DetachPet(CBattleEntity* PMaster);
-void   DespawnPet(CBattleEntity* PMaster);
-void   AttackTarget(CBattleEntity* PMaster, CBattleEntity* PTarget);
-uint16 GetJugWeaponDamage(CPetEntity* PPet);
-void   RetreatToMaster(CBattleEntity* PMaster);
-int16  PerpetuationCost(uint32 id, uint8 level);
-void   ExtendCharm(CBattleEntity* PPet, uint16 minSeconds, uint16 maxSeconds);
-void   LoadPet(CBattleEntity* PMaster, uint32 PetID, bool spawningFromZone);
+void  SpawnPet(CBattleEntity* PMaster, uint32 PetID, bool spawningFromZone);
+void  SpawnMobPet(CBattleEntity* PMaster, uint32 PetID, bool preserveName = false);
+void  DetachPet(CBattleEntity* PMaster);
+void  DespawnPet(CBattleEntity* PMaster);
+void  AttackTarget(CBattleEntity* PMaster, CBattleEntity* PTarget);
+void  RetreatToMaster(CBattleEntity* PMaster);
+int16 PerpetuationCost(uint32 id, uint8 level);
+void  ExtendCharm(CBattleEntity* PPet, uint16 minSeconds, uint16 maxSeconds);
+void  LoadPet(CBattleEntity* PMaster, uint32 PetID, bool spawningFromZone);
 
 void CalculateAvatarStats(CBattleEntity* PMaster, CPetEntity* PPet);
 void CalculateWyvernStats(CBattleEntity* PMaster, CPetEntity* PPet);

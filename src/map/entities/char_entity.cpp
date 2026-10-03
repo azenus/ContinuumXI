@@ -57,6 +57,7 @@
 #include "ai/helpers/targetfind.h"
 #include "ai/states/ability_state.h"
 #include "ai/states/attack_state.h"
+#include "ai/states/death_state.h"
 #include "ai/states/item_state.h"
 #include "ai/states/magic_state.h"
 #include "ai/states/weaponskill_state.h"
@@ -70,6 +71,7 @@
 #include "action/interrupts.h"
 #include "blue_spell.h"
 #include "conquest_system.h"
+#include "data/enums/claim_type.h"
 #include "data/enums/mob_mod.h"
 #include "enums/recast.h"
 #include "ipc_client.h"
@@ -78,6 +80,8 @@
 #include "items/item_furnishing.h"
 #include "items/item_usable.h"
 #include "items/item_weapon.h"
+#include "items/transactions/npc_trade.h"
+#include "items/transactions/player_trade.h"
 #include "items/transactions/synth.h"
 #include "job_points.h"
 #include "latent_effect_container.h"
@@ -161,7 +165,7 @@ CCharEntity::CCharEntity()
     std::memset(&m_PetCommands, 0, sizeof(m_PetCommands));
     std::memset(&m_WeaponSkills, 0, sizeof(m_WeaponSkills));
     std::memset(&m_SetBlueSpells, 0, sizeof(m_SetBlueSpells));
-    std::memset(&m_FieldChocobo, 0, sizeof(m_FieldChocobo));
+    std::memset(&m_chocoboUserData, 0, sizeof(m_chocoboUserData));
     std::memset(&m_unlockedAttachments, 0, sizeof(m_unlockedAttachments));
 
     std::memset(&m_questLog, 0, sizeof(m_questLog));
@@ -212,7 +216,6 @@ CCharEntity::CCharEntity()
 
     WideScanTarget = std::nullopt;
 
-    lastTradeInvite = {};
     TradePending.clean();
     InvitePending.clean();
 
@@ -564,6 +567,32 @@ auto CCharEntity::isCrafting() const -> bool
     return animation == xi::Animation::Synth || this->activeTransaction<SynthTransaction>();
 }
 
+auto CCharEntity::tradePartner() const -> CCharEntity*
+{
+    auto* other = TradePending.entity.resolve<CCharEntity>();
+    if (!other || other->TradePending.entity.UniqueNo != id)
+    {
+        return nullptr;
+    }
+
+    return other;
+}
+
+auto CCharEntity::activePlayerTradeTransaction() const -> PlayerTradeTransaction*
+{
+    if (auto* local = this->activeTransaction<PlayerTradeTransaction>())
+    {
+        return local;
+    }
+    auto* other = this->tradePartner();
+    if (!other)
+    {
+        return nullptr;
+    }
+
+    return other->activeTransaction<PlayerTradeTransaction>();
+}
+
 auto CCharEntity::isFishing() const -> bool
 {
     return (animation >= xi::Animation::NewFishingFish && animation <= xi::Animation::NewFishingStop) ||
@@ -667,6 +696,12 @@ void CCharEntity::setAutomatonHead(const AutomatonHead head)
 
 void CCharEntity::setAutomatonAttachment(const uint8 slotid, const uint8 id)
 {
+    if (slotid >= automatonInfo_.equip.attachments.size())
+    {
+        ShowWarningFmt("setAutomatonAttachment: slot {} out of range", slotid);
+        return;
+    }
+
     automatonInfo_.equip.attachments[slotid] = id;
 }
 
@@ -708,6 +743,12 @@ auto CCharEntity::getAutomatonHead() const -> AutomatonHead
 
 auto CCharEntity::getAutomatonAttachment(const uint8 slotid) const -> uint8
 {
+    if (slotid >= automatonInfo_.equip.attachments.size())
+    {
+        ShowWarningFmt("getAutomatonAttachment: slot {} out of range", slotid);
+        return 0;
+    }
+
     return automatonInfo_.equip.attachments[slotid];
 }
 
@@ -860,21 +901,18 @@ bool CCharEntity::hasBazaar()
     }
 
     CItemContainer* playerInventory = getStorage(LOC_INVENTORY);
-
-    if (playerInventory)
+    if (!playerInventory)
     {
-        for (uint8 slotID = 1; slotID <= playerInventory->GetSize(); ++slotID)
-        {
-            CItem* PItem = playerInventory->GetItem(slotID);
-
-            if ((PItem != nullptr) && (PItem->getCharPrice() != 0))
-            {
-                return true;
-                break;
-            }
-        }
+        return false;
     }
-    return false;
+
+    const auto* PListedItem = playerInventory->FindItem(
+        [](CItem* PItem)
+        {
+            return PItem->getCharPrice() != 0;
+        });
+
+    return PListedItem != nullptr;
 }
 
 void CCharEntity::SetName(const std::string& name)
@@ -1071,76 +1109,37 @@ void CCharEntity::ClearTrusts()
     ReloadPartyInc();
 }
 
-void CCharEntity::RequestPersist(CHAR_PERSIST toPersist)
+auto CCharEntity::persist() const -> CharPersist
 {
-    dataToPersist |= toPersist;
+    return persist_;
 }
 
-bool CCharEntity::PersistData()
+void CCharEntity::setPersist(CharPersist toPersist)
 {
-    bool didPersist = false;
-
-    if (!charVarChanges.empty())
-    {
-        for (auto&& charVarName : charVarChanges)
-        {
-            charutils::PersistCharVar(this->id, charVarName.c_str(), charVarCache[charVarName].first, charVarCache[charVarName].second);
-        }
-
-        charVarChanges.clear();
-        didPersist = true;
-    }
-
-    if (!dataToPersist)
-    {
-        return didPersist;
-    }
-    else
-    {
-        didPersist = true;
-    }
-
-    if (dataToPersist & CHAR_PERSIST::EQUIP)
-    {
-        charutils::SaveCharEquip(this);
-        charutils::SaveCharLook(this);
-    }
-
-    if (dataToPersist & CHAR_PERSIST::POSITION)
-    {
-        charutils::SaveCharPosition(this);
-    }
-
-    if (dataToPersist & CHAR_PERSIST::EFFECTS)
-    {
-        StatusEffectContainer->SaveStatusEffects(true);
-    }
-
-    /* TODO
-    if (dataToPersist & CHAR_PERSIST::LINKSHELL)
-    {
-        charutils::SaveCharLinkshells(this);
-    }
-    */
-
-    dataToPersist = 0;
-    return didPersist;
+    persist_ |= toPersist;
 }
 
-bool CCharEntity::PersistData(timer::time_point tick)
+void CCharEntity::clearPersist(CharPersist toPersist)
 {
-    if (tick < nextDataPersistTime || !PersistData())
+    persist_ &= ~toPersist;
+}
+
+void CCharEntity::takeCharVarChanges(std::vector<CharVarChange>& out)
+{
+    out.reserve(out.size() + charVarChanges.size());
+
+    for (const auto& charVarName : charVarChanges)
     {
-        return false;
+        const auto& cached = charVarCache[charVarName];
+        out.push_back({ id, charVarName, cached.first, cached.second });
     }
 
-    nextDataPersistTime = tick + TIME_BETWEEN_PERSIST;
-    return true;
+    charVarChanges.clear();
 }
 
 auto CCharEntity::Tick(timer::time_point tick) -> Task<void>
 {
-    TracyZoneScoped;
+    TracyZoneScopedN("CCharEntity::Tick");
 
     co_await CBattleEntity::Tick(tick);
 
@@ -1161,17 +1160,21 @@ auto CCharEntity::Tick(timer::time_point tick) -> Task<void>
 
 void CCharEntity::PostTick()
 {
-    TracyZoneScoped;
+    TracyZoneScopedN("CCharEntity::PostTick");
 
     CBattleEntity::PostTick();
 
     if (ReloadParty())
     {
+        TracyZoneNamed(reloadPartyZone, "CCharEntity::PostTick: ReloadParty");
+
         charutils::ReloadParty(this);
     }
 
     if (m_EffectsChanged)
     {
+        TracyZoneNamed(effectsChangedZone, "CCharEntity::PostTick: effects changed");
+
         pushPacket<CCharStatusPacket>(this);
         pushPacket<CCharSyncPacket>(this);
         charutils::SendExtendedJobPackets(this);
@@ -1187,6 +1190,8 @@ void CCharEntity::PostTick()
 
     if (updatemask && now > m_nextUpdateTimer)
     {
+        TracyZoneNamed(updateBroadcastZone, "CCharEntity::PostTick: update broadcast");
+
         m_nextUpdateTimer = now + 250ms;
 
         if (loc.zone && !m_isGMHidden)
@@ -1220,7 +1225,11 @@ void CCharEntity::PostTick()
         updatemask        = 0;
     }
 
-    inventorySyncState_.flushDirtyItems(this);
+    {
+        TracyZoneNamed(flushDirtyItemsZone, "CCharEntity::PostTick: flush dirty items");
+
+        inventorySyncState_.flushDirtyItems(this);
+    }
 }
 
 // Flush all pending equipment changes at end of network cycle after all SmallPackets have been processed
@@ -1313,7 +1322,7 @@ void CCharEntity::delTrait(CTrait* PTrait)
 
 bool CCharEntity::ValidTarget(CBattleEntity* PInitiator, uint16 targetFlags)
 {
-    TracyZoneScoped;
+    TracyZoneScopedN("CCharEntity::ValidTarget");
 
     if (StatusEffectContainer->GetConfrontationEffect() != PInitiator->StatusEffectContainer->GetConfrontationEffect())
     {
@@ -1372,7 +1381,7 @@ bool CCharEntity::ValidTarget(CBattleEntity* PInitiator, uint16 targetFlags)
 
 bool CCharEntity::CanUseSpell(CSpell* PSpell)
 {
-    TracyZoneScoped;
+    TracyZoneScopedN("CCharEntity::CanUseSpell");
 
     return charutils::hasSpell(this, static_cast<uint16>(PSpell->getID())) && CBattleEntity::CanUseSpell(PSpell);
 }
@@ -1388,7 +1397,7 @@ void CCharEntity::OnChangeTarget(CBattleEntity* PNewTarget)
 
 void CCharEntity::OnEngage(CAttackState& state)
 {
-    TracyZoneScoped;
+    TracyZoneScopedN("CCharEntity::OnEngage");
 
     CBattleEntity::OnEngage(state);
     PLatentEffectContainer->CheckLatentsTargetChange();
@@ -1397,7 +1406,12 @@ void CCharEntity::OnEngage(CAttackState& state)
 
 void CCharEntity::OnDisengage(CAttackState& state)
 {
-    TracyZoneScoped;
+    TracyZoneScopedN("CCharEntity::OnDisengage");
+
+    if (auto* controller = dynamic_cast<CPlayerController*>(PAI->GetController()))
+    {
+        controller->setEngageLockedUntil(timer::now() + state.EngageLockout());
+    }
 
     battleutils::RelinquishClaim(this);
     CBattleEntity::OnDisengage(state);
@@ -1410,7 +1424,7 @@ void CCharEntity::OnDisengage(CAttackState& state)
 
 bool CCharEntity::CanAttack(CBattleEntity* PTarget, std::unique_ptr<CBasicPacket>& errMsg)
 {
-    TracyZoneScoped;
+    TracyZoneScopedN("CCharEntity::CanAttack");
 
     if (PTarget->PAI->IsUntargetable())
     {
@@ -1447,7 +1461,7 @@ bool CCharEntity::CanAttack(CBattleEntity* PTarget, std::unique_ptr<CBasicPacket
 
 bool CCharEntity::OnAttack(CAttackState& state, action_t& action)
 {
-    TracyZoneScoped;
+    TracyZoneScopedN("CCharEntity::OnAttack");
 
     auto* controller{ static_cast<CPlayerController*>(PAI->GetController()) };
     controller->setLastAttackTime(timer::now());
@@ -1458,7 +1472,7 @@ bool CCharEntity::OnAttack(CAttackState& state, action_t& action)
 
 void CCharEntity::OnCastFinished(CMagicState& state, action_t& action)
 {
-    TracyZoneScoped;
+    TracyZoneScopedN("CCharEntity::OnCastFinished");
 
     auto* PSpell  = state.GetSpell();
     auto* PTarget = state.target().resolve<CBattleEntity>();
@@ -1496,16 +1510,20 @@ void CCharEntity::OnCastFinished(CMagicState& state, action_t& action)
                     actionResult.recordSkillchain(effect, battleutils::TakeSkillchainDamage(this, PTarget, actionResult.param, taChar));
                 }
 
-                if (StatusEffectContainer->HasStatusEffect({ xi::StatusEffect::Sekkanoki, xi::StatusEffect::MeikyoShisui }))
+                // only Chain Affinity reduces TP
+                if (StatusEffectContainer->HasStatusEffect(xi::StatusEffect::ChainAffinity))
                 {
-                    health.tp = (health.tp > 1000 ? health.tp - 1000 : 0);
-                }
-                else
-                {
-                    health.tp = 0;
-                }
+                    if (StatusEffectContainer->HasStatusEffect({ xi::StatusEffect::Sekkanoki, xi::StatusEffect::MeikyoShisui }))
+                    {
+                        health.tp = (health.tp > 1000 ? health.tp - 1000 : 0);
+                    }
+                    else
+                    {
+                        health.tp = 0;
+                    }
 
-                StatusEffectContainer->DelStatusEffectSilent(xi::StatusEffect::ChainAffinity);
+                    StatusEffectContainer->DelStatusEffectSilent(xi::StatusEffect::ChainAffinity);
+                }
             }
 
             // Immanence will create or extend a skillchain for elemental spells
@@ -1622,7 +1640,7 @@ void CCharEntity::OnCastFinished(CMagicState& state, action_t& action)
 
 void CCharEntity::OnCastInterrupted(CMagicState& state, action_t& action, MsgBasic msg, bool blockedCast)
 {
-    TracyZoneScoped;
+    TracyZoneScopedN("CCharEntity::OnCastInterrupted");
 
     CBattleEntity::OnCastInterrupted(state, action, msg, blockedCast);
 
@@ -1640,7 +1658,7 @@ void CCharEntity::OnCastInterrupted(CMagicState& state, action_t& action, MsgBas
 
 void CCharEntity::OnWeaponSkillFinished(CWeaponSkillState& state, action_t& action)
 {
-    TracyZoneScoped;
+    TracyZoneScopedN("CCharEntity::OnWeaponSkillFinished");
 
     CBattleEntity::OnWeaponSkillFinished(state, action);
 
@@ -1815,7 +1833,7 @@ void CCharEntity::OnAbility(CAbilityState& state, action_t& action)
 
         if (PAbility->getMeritModID() > 0 && !(PAbility->getAddType() & ADDTYPE_MERIT))
         {
-            recastReduction = std::chrono::seconds(PMeritPoints->GetMeritValue((MERIT_TYPE)PAbility->getMeritModID(), this));
+            recastReduction = std::chrono::seconds(PMeritPoints->GetMeritValue(static_cast<xi::Merit>(PAbility->getMeritModID()), this));
 
             if (PAbility->getID() == ABILITY_THIRD_EYE && StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Seigan))
             {
@@ -1835,7 +1853,7 @@ void CCharEntity::OnAbility(CAbilityState& state, action_t& action)
             //  Can't assign merits via ability ID for Sic/Ready due to shenanigans
             if (PAbility->getRecastId() == Recast::Sic) // Sic/Ready recast ID
             {
-                recastReduction = std::chrono::seconds(PMeritPoints->GetMeritValue(MERIT_SIC_RECAST, this));
+                recastReduction = std::chrono::seconds(PMeritPoints->GetMeritValue(xi::Merit::SicRecast, this));
             }
             else if (PAbility->getRecastId() == Recast::Strategems)
             {
@@ -2155,8 +2173,11 @@ void CCharEntity::OnRaise()
             m_weaknessLvl = 1;
         }
 
+        const auto* PDeathState = dynamic_cast<CDeathState*>(PAI->GetCurrentState());
+        const bool  mijin       = PDeathState && PDeathState->params().mijin;
+
         // add weakness effect (75% reduction in HP/MP)
-        if (GetLocalVar("MijinGakure") == 0)
+        if (!mijin)
         {
             auto weaknessTime = 5min;
 
@@ -2181,7 +2202,7 @@ void CCharEntity::OnRaise()
         auto& actionResult = actionTarget.addResult();
 
         // Mijin Gakure used with MIJIN_RERAISE MOD
-        if (GetLocalVar("MijinGakure") != 0 && getMod(xi::Mod::MIJIN_RERAISE) != 0)
+        if (mijin && getMod(xi::Mod::MIJIN_RERAISE) != 0)
         {
             actionResult.animation = ActionAnimation::Raise;
             hpReturned             = (uint16)(GetMaxHP());
@@ -2189,13 +2210,13 @@ void CCharEntity::OnRaise()
         else if (m_hasRaise == 1)
         {
             actionResult.animation = ActionAnimation::Raise;
-            hpReturned             = static_cast<uint16>((GetLocalVar("MijinGakure") != 0) ? GetMaxHP() * 0.5 : GetMaxHP() * 0.1);
+            hpReturned             = static_cast<uint16>(mijin ? GetMaxHP() * 0.5 : GetMaxHP() * 0.1);
             ratioReturned          = 0.50f * static_cast<double>(1 - settings::get<uint8>("map.EXP_RETAIN"));
         }
         else if (m_hasRaise == 2)
         {
             actionResult.animation = ActionAnimation::Raise2;
-            hpReturned             = static_cast<uint16>((GetLocalVar("MijinGakure") != 0) ? GetMaxHP() * 0.5 : GetMaxHP() * 0.25);
+            hpReturned             = static_cast<uint16>(mijin ? GetMaxHP() * 0.5 : GetMaxHP() * 0.25);
             ratioReturned          = ((GetMLevel() <= 50) ? 0.50f : 0.75f) * static_cast<double>(1 - settings::get<uint8>("map.EXP_RETAIN"));
         }
         else if (m_hasRaise == 3)
@@ -2233,7 +2254,6 @@ void CCharEntity::OnRaise()
             StatusEffectContainer->AddStatusEffect(xi::StatusEffect::Reraise, static_cast<uint16>(xi::StatusEffect::Reraise), 3, 0s, 1h);
         }
 
-        SetLocalVar("MijinGakure", 0);
         m_hasArise = false;
         m_hasRaise = 0;
     }
@@ -2246,7 +2266,7 @@ auto CCharEntity::OnItemFinish(CItemState& state, action_t& action) -> bool
     auto* PTarget = state.target().resolve<CBattleEntity>();
     auto* PItem   = state.GetItem();
 
-    if (!PItem->isType(ITEM_EQUIPMENT) && (PItem->getQuantity() < 1 || PItem->getReserve() > 0))
+    if (!PItem->isType(ITEM_EQUIPMENT) && PItem->getQuantity() < 1)
     {
         ShowWarning("OnItemFinish: %s attempted to use reserved/insufficient %s (%u).", this->getName(), PItem->getName(), PItem->getID());
         this->pushPacket<GP_SERV_COMMAND_BATTLE_MESSAGE>(this, this, PItem->getID(), 0, MsgBasic::ItemFailsToActivate);
@@ -2283,8 +2303,6 @@ auto CCharEntity::OnItemFinish(CItemState& state, action_t& action) -> bool
         actionResult.resolution       = ActionResolution::Hit;
         actionResult.animation        = PItem->getAnimationID();
 
-        // TODO: guard charutils::UpdateItem against InTransaction items so a
-        // Lua delItem inside OnItemUse can't decrement out-of-tx.
         int32 value = luautils::OnItemUse(this, PTargetFound, PItem, action);
 
         actionResult.param = value;
@@ -2345,14 +2363,14 @@ auto CCharEntity::OnItemFinish(CItemState& state, action_t& action) -> bool
 
 auto CCharEntity::IsValidTarget(uint16 targid, uint16 validTargetFlags, std::unique_ptr<CBasicPacket>& errMsg) -> CBattleEntity*
 {
-    TracyZoneScoped;
+    TracyZoneScopedN("CCharEntity::IsValidTarget");
 
     return applyTargetRestrictions(GetEntity(targid, TYPE_MOB | TYPE_PC | TYPE_PET | TYPE_TRUST), validTargetFlags, errMsg);
 }
 
 auto CCharEntity::IsValidTarget(EntityId target, uint16 validTargetFlags, std::unique_ptr<CBasicPacket>& errMsg) -> CBattleEntity*
 {
-    TracyZoneScoped;
+    TracyZoneScopedN("CCharEntity::IsValidTarget");
 
     return applyTargetRestrictions(target.resolve(), validTargetFlags, errMsg);
 }
@@ -2404,7 +2422,7 @@ auto CCharEntity::applyTargetRestrictions(CBaseEntity* PResolved, uint16 validTa
 
 void CCharEntity::Die()
 {
-    TracyZoneScoped;
+    TracyZoneScopedN("CCharEntity::Die");
 
     if (auto* PLastAttacker = lastAttackerId_.resolve())
     {
@@ -2422,15 +2440,21 @@ void CCharEntity::Die()
         petutils::DespawnPet(this);
     }
 
-    Die(death_duration);
+    const auto staged = nextDeath_.value_or(DeathParams{});
+    nextDeath_.reset();
+
+    // Retail stopped charging EXP for a KO while charmed in June 2007
+    const DeathParams params{
+        .losesExp = staged.losesExp && !isCharmed,
+        .mijin    = staged.mijin,
+    };
+
+    Die(death_duration, params);
     SetDeathTime(timer::now());
 
     setBlockingAid(false);
 
-    // influence for conquest system
-    conquest::LoseInfluencePoints(this);
-
-    if (GetLocalVar("MijinGakure") == 0 &&
+    if (params.losesExp &&
         (PBattlefield == nullptr || (PBattlefield->GetRuleMask() & RULES_LOSE_EXP) == RULES_LOSE_EXP) &&
         GetMLevel() >= settings::get<uint8>("map.EXP_LOSS_LEVEL"))
     {
@@ -2441,9 +2465,19 @@ void CCharEntity::Die()
     luautils::OnPlayerDeath(this);
 }
 
-void CCharEntity::Die(timer::duration _duration)
+auto CCharEntity::nextDeath() const -> const Maybe<DeathParams>&
 {
-    TracyZoneScoped;
+    return nextDeath_;
+}
+
+void CCharEntity::setNextDeath(Maybe<DeathParams> params)
+{
+    nextDeath_ = params;
+}
+
+void CCharEntity::Die(timer::duration _duration, DeathParams params)
+{
+    TracyZoneScopedN("CCharEntity::Die");
 
     this->ClearTrusts();
 
@@ -2462,7 +2496,7 @@ void CCharEntity::Die(timer::duration _duration)
 
     m_deathSyncTime = timer::now() + death_update_frequency;
     PAI->ClearStateStack();
-    PAI->Internal_Die(_duration);
+    PAI->Internal_Die(_duration, params);
 
     // If player allegiance is not reset on death they will auto-homepoint
     allegiance = xi::Allegiance::Player;
@@ -2560,19 +2594,19 @@ void CCharEntity::UpdateMoghancement()
     std::array<uint16, 8> elements = { 0 };
     for (auto containerID : { LOC_MOGSAFE, LOC_MOGSAFE2 })
     {
-        CItemContainer* PContainer = getStorage(containerID);
-        for (int slotID = 1; slotID <= PContainer->GetSize(); ++slotID)
-        {
-            CItem* PItem = PContainer->GetItem(slotID);
-            if (PItem != nullptr && PItem->isType(ITEM_FURNISHING))
+        auto* PContainer = getStorage(containerID);
+        PContainer->ForEachItem(
+            [&](CItem* PItem)
             {
-                CItemFurnishing* PFurniture = static_cast<CItemFurnishing*>(PItem);
-                if (PFurniture->isInstalled() && !PFurniture->getOn2ndFloor())
+                if (PItem->isType(ITEM_FURNISHING))
                 {
-                    elements[PFurniture->getElement() - 1] += PFurniture->getAura();
+                    auto* PFurniture = static_cast<CItemFurnishing*>(PItem);
+                    if (PFurniture->isInstalled() && !PFurniture->getOn2ndFloor())
+                    {
+                        elements[PFurniture->getElement() - 1] += PFurniture->getAura();
+                    }
                 }
-            }
-        }
+            });
     }
 
     // Determine the dominant aura
@@ -2601,26 +2635,26 @@ void CCharEntity::UpdateMoghancement()
     {
         for (auto containerID : { LOC_MOGSAFE, LOC_MOGSAFE2 })
         {
-            CItemContainer* PContainer = getStorage(containerID);
-            for (int slotID = 1; slotID <= PContainer->GetSize(); ++slotID)
-            {
-                CItem* PItem = PContainer->GetItem(slotID);
-                if (PItem != nullptr && PItem->isType(ITEM_FURNISHING))
+            auto* PContainer = getStorage(containerID);
+            PContainer->ForEachItem(
+                [&](CItem* PItem)
                 {
-                    CItemFurnishing* PFurniture = static_cast<CItemFurnishing*>(PItem);
-                    // Highest aura wins, ties broken by highest moghancement id.
-                    if (PFurniture->isInstalled() && !PFurniture->getOn2ndFloor() && PFurniture->getElement() == dominantElement)
+                    if (PItem->isType(ITEM_FURNISHING))
                     {
-                        const uint8  aura         = PFurniture->getAura();
-                        const uint16 moghancement = PFurniture->getMoghancement();
-                        if (aura > bestAura || (aura == bestAura && moghancement > newMoghancementID))
+                        auto* PFurniture = static_cast<CItemFurnishing*>(PItem);
+                        // Highest aura wins, ties broken by highest moghancement id.
+                        if (PFurniture->isInstalled() && !PFurniture->getOn2ndFloor() && PFurniture->getElement() == dominantElement)
                         {
-                            bestAura          = aura;
-                            newMoghancementID = moghancement;
+                            const uint8  aura         = PFurniture->getAura();
+                            const uint16 moghancement = PFurniture->getMoghancement();
+                            if (aura > bestAura || (aura == bestAura && moghancement > newMoghancementID))
+                            {
+                                bestAura          = aura;
+                                newMoghancementID = moghancement;
+                            }
                         }
                     }
-                }
-            }
+                });
         }
     }
 
@@ -2635,13 +2669,13 @@ void CCharEntity::UpdateMoghancement()
         // Remove the previous moghancement
         if (m_moghancementID != 0)
         {
-            charutils::delKeyItem(this, static_cast<KeyItem>(m_moghancementID));
+            charutils::delKeyItem(this, static_cast<xi::KeyItem>(m_moghancementID));
         }
 
         // Add the new moghancement
         if (newMoghancementID != 0)
         {
-            charutils::addKeyItem(this, static_cast<KeyItem>(newMoghancementID));
+            charutils::addKeyItem(this, static_cast<xi::KeyItem>(newMoghancementID));
         }
 
         // Send only one key item packet if they are in the same key item table
@@ -2945,6 +2979,13 @@ bool CCharEntity::isNpcLocked()
 
 void CCharEntity::endCurrentEvent()
 {
+    // release an offer the event never consumed
+    if (auto* offer = this->activeTransaction<NpcTradeTransaction>())
+    {
+        this->removeTransaction(offer);
+        TradeContainer->Clean();
+    }
+
     currentEvent->reset();
     eventPreparation->reset();
     setLocked(false);
@@ -3033,6 +3074,10 @@ void CCharEntity::tryStartNextEvent()
 
     // Set hidden status based on event data
     m_isPCHidden = currentEvent->isHidden;
+    if (m_isPCHidden)
+    {
+        updatemask |= UPDATE_HP;
+    }
 
     if (currentEvent->strings.empty())
     {

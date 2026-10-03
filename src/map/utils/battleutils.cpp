@@ -1,4 +1,4 @@
-/*
+﻿/*
 ===========================================================================
 
   Copyright (c) 2010-2015 Darkstar Dev Teams
@@ -45,6 +45,7 @@
 #include "attack.h"
 #include "attackutils.h"
 #include "charutils.h"
+#include "data/enums/claim_type.h"
 #include "data/enums/mob_mod.h"
 #include "data/enums/weather.h"
 #include "enmity_container.h"
@@ -56,6 +57,7 @@
 #include "item_container.h"
 #include "items.h"
 #include "items/item_weapon.h"
+#include "items/transactions/item_claim.h"
 #include "job_points.h"
 #include "mobskill.h"
 #include "modifier.h"
@@ -164,7 +166,14 @@ void LoadWeaponSkillsList()
                                        MAX_WEAPONSKILL_ID);
     FOR_DB_MULTIPLE_RESULTS(rset)
     {
-        auto* PWeaponSkill = new CWeaponSkill(rset->get<uint16>("weaponskillid"));
+        const auto weaponSkillId = rset->get<uint16>("weaponskillid");
+        if (weaponSkillId >= MAX_WEAPONSKILL_ID)
+        {
+            ShowErrorFmt("weaponskillid {} is out of range, MAX_WEAPONSKILL_ID is {}. Skipping.", weaponSkillId, MAX_WEAPONSKILL_ID);
+            continue;
+        }
+
+        auto* PWeaponSkill = new CWeaponSkill(weaponSkillId);
 
         PWeaponSkill->setName(rset->get<std::string>("name"));
 
@@ -207,7 +216,14 @@ void LoadMobSkillsList()
                                  "FROM mob_skills");
     FOR_DB_MULTIPLE_RESULTS(rset)
     {
-        auto* PMobSkill = new CMobSkill(rset->get<uint16>("mob_skill_id"));
+        const auto mobSkillId = rset->get<uint16>("mob_skill_id");
+        if (mobSkillId >= MAX_MOBSKILL_ID)
+        {
+            ShowErrorFmt("mob_skill_id {} is out of range, MAX_MOBSKILL_ID is {}. Skipping.", mobSkillId, MAX_MOBSKILL_ID);
+            continue;
+        }
+
+        auto* PMobSkill = new CMobSkill(mobSkillId);
 
         PMobSkill->setAnimationID(rset->get<uint16>("mob_anim_id"));
         PMobSkill->setName(rset->get<std::string>("mob_skill_name"));
@@ -521,7 +537,7 @@ int32 CalculateEnspellDamage(CBattleEntity* PAttacker, CBattleEntity* PDefender,
         auto* PChar = dynamic_cast<CCharEntity*>(PAttacker);
         if (PChar)
         {
-            damage += PChar->PMeritPoints->GetMeritValue(MERIT_ENSPELL_DAMAGE, PChar);
+            damage += PChar->PMeritPoints->GetMeritValue(xi::Merit::EnspellDamage, PChar);
         }
     }
     else if (Tier == 2)
@@ -554,7 +570,7 @@ int32 CalculateEnspellDamage(CBattleEntity* PAttacker, CBattleEntity* PDefender,
         auto* PChar = dynamic_cast<CCharEntity*>(PAttacker);
         if (PChar)
         {
-            damage += PChar->PMeritPoints->GetMeritValue(MERIT_ENSPELL_DAMAGE, PChar) * 2;
+            damage += PChar->PMeritPoints->GetMeritValue(xi::Merit::EnspellDamage, PChar) * 2;
         }
     }
     else if (Tier == 3) // enlight or endark
@@ -850,7 +866,9 @@ auto HandleSpikesDamage(CBattleEntity* PAttacker, CBattleEntity* PDefender, acti
     Action->spikesParam   = std::max<int16>(PDefender->getMod(xi::Mod::SPIKES_DMG), 0);
 
     // Handle Retaliation
-    if (PDefender->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Retaliation) && PDefender->PAI->IsEngaged() &&
+    if (!PAttacker->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::PerfectDodge) &&
+        PDefender->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Retaliation) &&
+        PDefender->PAI->IsEngaged() &&
         battleutils::GetHitRate(PDefender, PAttacker) / 2 > xirand::GetRandomNumber(100) && facing(PDefender->loc.p, PAttacker->loc.p, 64))
     {
         // Retaliation rate is based on player acc vs mob evasion. Missed retaliations do not even display in log.
@@ -1518,15 +1536,19 @@ void HandleEnspell(CBattleEntity* PAttacker, CBattleEntity* PDefender, action_re
         return; // Lambda handled the function
     }
     // check script for grip if main failed
-    else if (PAttacker->objtype == TYPE_PC && static_cast<CCharEntity*>(PAttacker)->getEquip(SLOT_SUB) && weapon == PAttacker->m_Weapons[SLOT_MAIN] &&
-             static_cast<CItemWeapon*>(static_cast<CCharEntity*>(PAttacker)->getEquip(SLOT_SUB))->getSkillType() == xi::SkillType::None &&
-             battleutils::GetScaledItemModifier(PAttacker, static_cast<CCharEntity*>(PAttacker)->getEquip(SLOT_SUB), xi::Mod::ITEM_ADDEFFECT_TYPE) > 0 &&
-             luautils::additionalEffectAttack(PAttacker, PDefender, static_cast<CItemWeapon*>(static_cast<CCharEntity*>(PAttacker)->getEquip(SLOT_SUB)), Action, finaldamage) == 0 &&
-             Action->hasAdditionalEffect())
+    else if (PAttacker->objtype == TYPE_PC && static_cast<CCharEntity*>(PAttacker)->getEquip(SLOT_SUB) && weapon == PAttacker->m_Weapons[SLOT_MAIN])
     {
-        if (Action->addEffectMessage == MsgBasic::AddEffectDamage && Action->addEffectParam < 0)
+        if (auto* PSubWeapon = dynamic_cast<CItemWeapon*>(static_cast<CCharEntity*>(PAttacker)->getEquip(SLOT_SUB));
+            PSubWeapon &&
+            PSubWeapon->getSkillType() == xi::SkillType::None &&
+            GetScaledItemModifier(PAttacker, PSubWeapon, xi::Mod::ITEM_ADDEFFECT_TYPE) > 0 &&
+            luautils::additionalEffectAttack(PAttacker, PDefender, PSubWeapon, Action, finaldamage) == 0 &&
+            Action->hasAdditionalEffect())
         {
-            Action->addEffectMessage = MsgBasic::AddEffectRecoversHP;
+            if (Action->addEffectMessage == MsgBasic::AddEffectDamage && Action->addEffectParam < 0)
+            {
+                Action->addEffectMessage = MsgBasic::AddEffectRecoversHP;
+            }
         }
     }
     else if ((PAttacker->objtype == TYPE_MOB || PAttacker->objtype == TYPE_PET) && static_cast<CMobEntity*>(PAttacker)->getMobMod(xi::MobMod::AddEffect) > 0)
@@ -1937,7 +1959,7 @@ bool TryInterruptSpell(CBattleEntity* PAttacker, CBattleEntity* PDefender, CSpel
         }
 
         // Fetch player-only interruption rate reduction from merits.
-        meritReduction = ((CCharEntity*)PDefender)->PMeritPoints->GetMeritValue(MERIT_SPELL_INTERUPTION_RATE, (CCharEntity*)PDefender);
+        meritReduction = ((CCharEntity*)PDefender)->PMeritPoints->GetMeritValue(xi::Merit::SpellInterruptionRate, (CCharEntity*)PDefender);
     }
 
     // SIRD reduces the interrupt after all the calculations are done -- as evidenced by the infamous "102% SIRD" builds.
@@ -2002,7 +2024,7 @@ auto TakePhysicalDamage(CBattleEntity* PAttacker, CBattleEntity* PDefender, PHYS
         // Merit value of 1 is +5%, so 60% normal power
         if (PAttacker->objtype == TYPE_PC)
         {
-            formlessMod += ((CCharEntity*)PAttacker)->PMeritPoints->GetMeritValue(MERIT_FORMLESS_STRIKES, (CCharEntity*)PAttacker);
+            formlessMod += ((CCharEntity*)PAttacker)->PMeritPoints->GetMeritValue(xi::Merit::FormlessStrikes, (CCharEntity*)PAttacker);
         }
 
         damage = damage * formlessMod / 100;
@@ -2541,7 +2563,11 @@ uint8 GetCritHitRate(CBattleEntity* PAttacker, CBattleEntity* PDefender, bool ig
     }
     else if (PAttacker->objtype == TYPE_PC && (!ignoreSneakTrickAttack) && PAttacker->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::SneakAttack))
     {
-        if (behind(PAttacker->loc.p, PDefender->loc.p, 64) || PAttacker->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Hide))
+        if (PAttacker->GetMJob() == xi::Job::THF and PDefender->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Doubt))
+        {
+            critHitRate = 100;
+        }
+        else if (behind(PAttacker->loc.p, PDefender->loc.p, 64) || PAttacker->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Hide))
         {
             critHitRate = 100;
         }
@@ -2561,7 +2587,7 @@ uint8 GetCritHitRate(CBattleEntity* PAttacker, CBattleEntity* PDefender, bool ig
         if (PAttacker->objtype == TYPE_PC)
         {
             CCharEntity* PCharAttacker = static_cast<CCharEntity*>(PAttacker);
-            critHitRate += PCharAttacker->PMeritPoints->GetMeritValue(MERIT_CRIT_HIT_RATE, PCharAttacker);
+            critHitRate += PCharAttacker->PMeritPoints->GetMeritValue(xi::Merit::CritHitRate, PCharAttacker);
 
             // Add Fencer crit hit rate
             CItemWeapon*    PMain      = dynamic_cast<CItemWeapon*>(PCharAttacker->m_Weapons[SLOT_MAIN]);
@@ -2577,7 +2603,7 @@ uint8 GetCritHitRate(CBattleEntity* PAttacker, CBattleEntity* PDefender, bool ig
 
         if (PDefender->objtype == TYPE_PC)
         {
-            critHitRate -= ((CCharEntity*)PDefender)->PMeritPoints->GetMeritValue(MERIT_ENEMY_CRIT_RATE, (CCharEntity*)PDefender);
+            critHitRate -= ((CCharEntity*)PDefender)->PMeritPoints->GetMeritValue(xi::Merit::EnemyCritRate, (CCharEntity*)PDefender);
         }
 
         // Check for Innin crit rate bonus from behind target
@@ -2663,12 +2689,12 @@ uint8 GetRangedCritHitRate(CBattleEntity* PAttacker, CBattleEntity* PDefender)
     if (PAttacker->objtype == TYPE_PC)
     {
         CCharEntity* PCharAttacker = static_cast<CCharEntity*>(PAttacker);
-        critHitRate += PCharAttacker->PMeritPoints->GetMeritValue(MERIT_CRIT_HIT_RATE, PCharAttacker);
+        critHitRate += PCharAttacker->PMeritPoints->GetMeritValue(xi::Merit::CritHitRate, PCharAttacker);
     }
 
     if (PDefender->objtype == TYPE_PC)
     {
-        critHitRate -= ((CCharEntity*)PDefender)->PMeritPoints->GetMeritValue(MERIT_ENEMY_CRIT_RATE, (CCharEntity*)PDefender);
+        critHitRate -= ((CCharEntity*)PDefender)->PMeritPoints->GetMeritValue(xi::Merit::EnemyCritRate, (CCharEntity*)PDefender);
     }
 
     // Check for Innin crit rate bonus from behind target
@@ -3004,11 +3030,11 @@ uint8 CheckMultiHits(CBattleEntity* PEntity, CItemWeapon* PWeapon)
         // merit chance only applies if player has the job trait
         if (charutils::hasTrait(PChar, TRAIT_TRIPLE_ATTACK))
         {
-            tripleAttack += PChar->PMeritPoints->GetMeritValue(MERIT_TRIPLE_ATTACK_RATE, (CCharEntity*)PEntity);
+            tripleAttack += PChar->PMeritPoints->GetMeritValue(xi::Merit::TripleAttackRate, (CCharEntity*)PEntity);
         }
         if (charutils::hasTrait(PChar, TRAIT_DOUBLE_ATTACK))
         {
-            doubleAttack += PChar->PMeritPoints->GetMeritValue(MERIT_DOUBLE_ATTACK_RATE, (CCharEntity*)PEntity);
+            doubleAttack += PChar->PMeritPoints->GetMeritValue(xi::Merit::DoubleAttackRate, (CCharEntity*)PEntity);
         }
     }
 
@@ -3037,7 +3063,7 @@ uint8 CheckMultiHits(CBattleEntity* PEntity, CItemWeapon* PWeapon)
             uint16 zanshin = PEntity->getMod(xi::Mod::ZANSHIN);
             if (PEntity->objtype == TYPE_PC)
             {
-                zanshin += ((CCharEntity*)PEntity)->PMeritPoints->GetMeritValue(MERIT_ZASHIN_ATTACK_RATE, (CCharEntity*)PEntity);
+                zanshin += ((CCharEntity*)PEntity)->PMeritPoints->GetMeritValue(xi::Merit::ZanshinAttackRate, (CCharEntity*)PEntity);
             }
 
             if (xirand::GetRandomNumber(100) < (zanshin / 4))
@@ -3086,6 +3112,20 @@ bool IsAbsorbByShadow(CBattleEntity* PDefender, CBattleEntity* PAttacker)
     {
         PDefender->setModifier(modShadow, --Shadow);
 
+        if (PDefender->objtype == TYPE_PC)
+        {
+            static_cast<CCharEntity*>(PDefender)->setPersist(CharPersist::Effects);
+        }
+
+        // player loses 25 CE every time an attack is absorbed by an utsusemi shadow
+        if (xi::Mod::UTSUSEMI == modShadow && PDefender->objtype == TYPE_PC)
+        {
+            if (auto* PMob = dynamic_cast<CMobEntity*>(PAttacker))
+            {
+                PMob->PEnmityContainer->UpdateEnmity(PDefender, -25, 0);
+            }
+        }
+
         if (Shadow == 0)
         {
             switch (modShadow)
@@ -3117,11 +3157,6 @@ bool IsAbsorbByShadow(CBattleEntity* PDefender, CBattleEntity* PAttacker)
                         case 2:
                             icon = static_cast<uint16>(xi::StatusEffect::CopyImage2);
                             break;
-                    }
-                    // player loses 25 CE if attack absorbed by utsusemi shadow
-                    if (auto* PMob = dynamic_cast<CMobEntity*>(PAttacker))
-                    {
-                        PMob->PEnmityContainer->UpdateEnmity(PDefender, -25, 0);
                     }
                     PStatusEffect->SetIcon(icon);
                     PDefender->StatusEffectContainer->UpdateStatusIcons();
@@ -3661,8 +3696,15 @@ bool HasNinjaTool(CBattleEntity* PEntity, CSpell* PSpell, bool ConsumeTool)
         if (ConsumeTool && hasFutae && useFutae)
         {
             // Futae Takes 2 of Your Tools
-            charutils::UpdateItem(PChar, LOC_INVENTORY, SlotID, -2);
-            PChar->pushPacket<GP_SERV_COMMAND_ITEM_SAME>(PChar);
+            if (auto transaction = ItemClaimTransaction::start(PChar); !transaction || !transaction->take(LOC_INVENTORY, SlotID, 2) || !transaction->commit())
+            {
+                ShowErrorFmt("battleutils: {} could not spend the tools in slot {}", PChar->getName(), SlotID);
+                return false;
+            }
+            else
+            {
+                PChar->pushPacket<GP_SERV_COMMAND_ITEM_SAME>(PChar);
+            }
         }
         else
         {
@@ -3670,7 +3712,7 @@ bool HasNinjaTool(CBattleEntity* PEntity, CSpell* PSpell, bool ConsumeTool)
 
             if (charutils::hasTrait(PChar, TRAIT_NINJA_TOOL_EXPERT))
             {
-                meritBonus = PChar->PMeritPoints->GetMeritValue(MERIT_NINJA_TOOL_EXPERTISE, PChar);
+                meritBonus = PChar->PMeritPoints->GetMeritValue(xi::Merit::NinjaToolExpertise, PChar);
             }
 
             uint16 chance = (PChar->getMod(xi::Mod::NINJA_TOOL) + meritBonus);
@@ -3681,8 +3723,15 @@ bool HasNinjaTool(CBattleEntity* PEntity, CSpell* PSpell, bool ConsumeTool)
 
                 if (!expertiseProc)
                 {
-                    charutils::UpdateItem(PChar, LOC_INVENTORY, SlotID, -1);
-                    PChar->pushPacket<GP_SERV_COMMAND_ITEM_SAME>(PChar);
+                    if (auto transaction = ItemClaimTransaction::start(PChar); !transaction || !transaction->take(LOC_INVENTORY, SlotID, 1) || !transaction->commit())
+                    {
+                        ShowErrorFmt("battleutils: {} could not spend the tool in slot {}", PChar->getName(), SlotID);
+                        return false;
+                    }
+                    else
+                    {
+                        PChar->pushPacket<GP_SERV_COMMAND_ITEM_SAME>(PChar);
+                    }
                 }
             }
         }
@@ -3975,7 +4024,7 @@ uint8 getStoreTPbonusFromMerit(CBattleEntity* PEntity)
     {
         if (((CCharEntity*)PEntity)->GetMJob() == xi::Job::SAM)
         {
-            return ((CCharEntity*)PEntity)->PMeritPoints->GetMeritValue(MERIT_STORE_TP_EFFECT, (CCharEntity*)PEntity);
+            return ((CCharEntity*)PEntity)->PMeritPoints->GetMeritValue(xi::Merit::StoreTpEffect, (CCharEntity*)PEntity);
         }
     }
     return 0;
@@ -3994,7 +4043,7 @@ int32 getOverWhelmDamageBonus(CBattleEntity* PAttacker, CBattleEntity* PDefender
         // must be in front of mob
         if (infront(PChar->loc.p, PDefender->loc.p, 64))
         {
-            uint8 meritCount = PChar->PMeritPoints->GetMeritValue(MERIT_OVERWHELM, PChar);
+            uint8 meritCount = PChar->PMeritPoints->GetMeritValue(xi::Merit::Overwhelm, PChar);
             float tmpDamage  = static_cast<float>(damage);
 
             switch (meritCount)
@@ -4994,7 +5043,7 @@ void DrawIn(CBattleEntity* PTarget, const position_t pos, const float offset, co
     constexpr float ENTITY_HEIGHT = 2.0f;
 
     const auto src = Vector3{ pos.x, pos.y - ENTITY_HEIGHT, pos.z };
-    const auto dst = Vector3{ nearEntity.x, nearEntity.y, nearEntity.z };
+    const auto dst = Vector3{ nearEntity.x, nearEntity.y - ENTITY_HEIGHT, nearEntity.z };
     if (PTarget->loc.zone->xiMesh()->rayIntersect(src, dst))
     {
         return;
@@ -5033,6 +5082,11 @@ void DoWildCardToEntity(CCharEntity* PCaster, CCharEntity* PTarget, const uint8 
 {
     // No matter the roll, all basic abilities are reset
     PTarget->PRecastContainer->ResetAbilities();
+
+    if (roll >= 3)
+    {
+        PTarget->updatemask |= UPDATE_HP;
+    }
 
     switch (roll)
     {
@@ -5116,7 +5170,7 @@ bool DoRandomDealToEntity(CCharEntity* PChar, CBattleEntity* PTarget)
         return false;
     }
 
-    uint8 loadedDeck       = PChar->PMeritPoints->GetMeritValue(MERIT_LOADED_DECK, PChar);
+    uint8 loadedDeck       = PChar->PMeritPoints->GetMeritValue(xi::Merit::LoadedDeck, PChar);
     uint8 loadedDeckChance = 50 + loadedDeck;
     uint8 resetTwoChance   = std::min<int8>(PChar->getMod(xi::Mod::RANDOM_DEAL_BONUS), 50);
 
@@ -5219,7 +5273,7 @@ int16 GetRangedDelayReduction(CBattleEntity* battleEntity, int16 delay)
     {
         if (charutils::hasTrait(PChar, TRAIT_SNAPSHOT))
         {
-            SnapShotReductionPercent += PChar->PMeritPoints->GetMeritValue(MERIT_SNAPSHOT, PChar);
+            SnapShotReductionPercent += PChar->PMeritPoints->GetMeritValue(xi::Merit::Snapshot, PChar);
         }
     }
 
@@ -5304,7 +5358,7 @@ void AddTraits(CBattleEntity* PEntity, TraitList_t* traitList, uint8 level)
                     {
                         if (PExistingTrait->getMeritID() > 0)
                         {
-                            if (PChar->PMeritPoints->GetMerit((MERIT_TYPE)PExistingTrait->getMeritID())->count == 0)
+                            if (PChar->PMeritPoints->GetMerit(static_cast<xi::Merit>(PExistingTrait->getMeritID()))->count == 0)
                             {
                                 PEntity->delTrait(PExistingTrait);
                                 break;
@@ -5338,7 +5392,7 @@ void AddTraits(CBattleEntity* PEntity, TraitList_t* traitList, uint8 level)
             // Don't add traits that aren't merited yet
             if (PChar)
             {
-                if (PTrait->getMeritID() > 0 && PChar->PMeritPoints->GetMerit((MERIT_TYPE)PTrait->getMeritID())->count == 0)
+                if (PTrait->getMeritID() > 0 && PChar->PMeritPoints->GetMerit(static_cast<xi::Merit>(PTrait->getMeritID()))->count == 0)
                 {
                     add = false;
                 }
@@ -5443,7 +5497,7 @@ timer::duration CalculateSpellCastTime(CBattleEntity* PEntity, CMagicState* PMag
                 bonus += PChar->PJobPoints->GetJobPointValue(JP_STRATEGEM_EFFECT_II);
             }
 
-            cast -= std::chrono::floor<std::chrono::milliseconds>(base * ((100 - (50 + bonus)) / 100.0f));
+            cast -= std::chrono::floor<std::chrono::milliseconds>(base * ((50 + bonus) / 100.0f));
             applyArts = false;
         }
         // Add Black & Dark Magic Casting Time -% bonus to Bio, Absorbs, Drain, Aspir, Dread Spikes, Stun, Tractor, Endark
@@ -5486,7 +5540,7 @@ timer::duration CalculateSpellCastTime(CBattleEntity* PEntity, CMagicState* PMag
                 bonus += PChar->PJobPoints->GetJobPointValue(JP_STRATEGEM_EFFECT_II);
             }
 
-            cast -= std::chrono::floor<std::chrono::milliseconds>(base * ((100 - (50 + bonus)) / 100.0f));
+            cast -= std::chrono::floor<std::chrono::milliseconds>(base * ((50 + bonus) / 100.0f));
             applyArts = false;
         }
         else if (applyArts)
@@ -5509,7 +5563,7 @@ timer::duration CalculateSpellCastTime(CBattleEntity* PEntity, CMagicState* PMag
         if (PEntity->objtype == TYPE_PC && settings::get<bool>("main.ENABLE_SMN_MAGIC_CAST_TIME_MERIT"))
         {
             auto* PChar = static_cast<CCharEntity*>(PEntity);
-            amount += std::chrono::floor<std::chrono::milliseconds>(base * 0.01 * PChar->PMeritPoints->GetMeritValue(MERIT_SUMMONING_MAGIC_CAST_TIME, PChar));
+            amount += std::chrono::floor<std::chrono::milliseconds>(base * 0.01 * PChar->PMeritPoints->GetMeritValue(xi::Merit::SummoningMagicCastTime, PChar));
         }
 
         if (cast > amount)
@@ -5533,7 +5587,7 @@ timer::duration CalculateSpellCastTime(CBattleEntity* PEntity, CMagicState* PMag
         if (PEntity->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Nightingale))
         {
             if (PEntity->objtype == TYPE_PC &&
-                xirand::GetRandomNumber(100) < ((CCharEntity*)PEntity)->PMeritPoints->GetMeritValue(MERIT_NIGHTINGALE, (CCharEntity*)PEntity) - 25)
+                xirand::GetRandomNumber(100) < ((CCharEntity*)PEntity)->PMeritPoints->GetMeritValue(xi::Merit::Nightingale, (CCharEntity*)PEntity) - 25)
             {
                 return 0s;
             }
@@ -5565,7 +5619,7 @@ timer::duration CalculateSpellCastTime(CBattleEntity* PEntity, CMagicState* PMag
         fastCast += PEntity->getMod(xi::Mod::CURE_CAST_TIME);
         if (PEntity->objtype == TYPE_PC)
         {
-            fastCast += ((CCharEntity*)PEntity)->PMeritPoints->GetMeritValue(MERIT_CURE_CAST_TIME, (CCharEntity*)PEntity);
+            fastCast += ((CCharEntity*)PEntity)->PMeritPoints->GetMeritValue(xi::Merit::CureCastTime, (CCharEntity*)PEntity);
         }
     }
     else if (PSpell->getSkillType() == xi::SkillType::Geomancy && PEntity->objtype == TYPE_PC)
@@ -5721,7 +5775,7 @@ timer::duration CalculateSpellRecastTime(CBattleEntity* PEntity, CSpell* PSpell)
 
     // Apply Haste (Magic and Gear)
     int32 hasteMagic = std::clamp<int32>(PEntity->getMod(xi::Mod::HASTE_MAGIC), -10000, 4375); // 43.75% cap -- handle 100% slow for weakness
-    int32 hasteGear  = std::clamp<int32>(PEntity->getMod(xi::Mod::HASTE_GEAR), -2500, 2500);   // 25%
+    int32 hasteGear  = std::min<int32>(PEntity->getMod(xi::Mod::HASTE_GEAR), 2500);            // 25% haste cap, slow is uncapped
     int32 haste      = hasteMagic + hasteGear;
     recast           = std::chrono::floor<std::chrono::milliseconds>(recast * ((10000.0f - haste) / 10000.0f));
 
@@ -5738,13 +5792,13 @@ timer::duration CalculateSpellRecastTime(CBattleEntity* PEntity, CSpell* PSpell)
             auto* PChar = static_cast<CCharEntity*>(PEntity);
             if (PSpell->getID() == SpellID::Magic_Finale) // apply Finale recast merits
             {
-                recast -= std::chrono::seconds(PChar->PMeritPoints->GetMeritValue(MERIT_FINALE_RECAST, PChar));
+                recast -= std::chrono::seconds(PChar->PMeritPoints->GetMeritValue(xi::Merit::FinaleRecast, PChar));
             }
 
             if (PSpell->getID() == SpellID::Foe_Lullaby || PSpell->getID() == SpellID::Foe_Lullaby_II || PSpell->getID() == SpellID::Horde_Lullaby ||
                 PSpell->getID() == SpellID::Horde_Lullaby_II) // apply Lullaby recast merits
             {
-                recast -= std::chrono::seconds(PChar->PMeritPoints->GetMeritValue(MERIT_LULLABY_RECAST, PChar));
+                recast -= std::chrono::seconds(PChar->PMeritPoints->GetMeritValue(xi::Merit::LullabyRecast, PChar));
             }
         }
         recast -= std::chrono::seconds(PEntity->getMod(xi::Mod::SONG_RECAST_DELAY));
@@ -5816,16 +5870,21 @@ timer::duration CalculateSpellRecastTime(CBattleEntity* PEntity, CSpell* PSpell)
         if (PEntity->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Alacrity))
         {
             recast = std::chrono::floor<std::chrono::milliseconds>(recast * 0.60); // 40% reduction from Alacrity alone
-            recast = std::max<timer::duration>(recast, recastCapFloor(alacrityCelerityRecastReductionCap));
 
-            // Only apply bonus mod if the spell element matches the weather, this is allowed to go over the 80% cap to a 90% cap.
+            auto reductionCap = recastReductionCap;
+
+            // the relic feet bonus only applies when the spell element matches the weather, and only then does the cap extend to 90%
             if (battleutils::WeatherMatchesElement(battleutils::GetWeather(PEntity, false), static_cast<uint8>(PSpell->getElement())))
             {
                 uint16 bonus = PEntity->getMod(xi::Mod::ALACRITY_CELERITY_EFFECT);
-
-                recast = std::chrono::floor<std::chrono::milliseconds>(recast * ((100 - bonus) / 100.0f));
-                recast = std::max<timer::duration>(recast, recastCapFloor(alacrityCelerityRecastReductionCap));
+                if (bonus > 0)
+                {
+                    recast       = std::chrono::floor<std::chrono::milliseconds>(recast * ((100 - bonus) / 100.0f));
+                    reductionCap = alacrityCelerityRecastReductionCap;
+                }
             }
+
+            recast = std::max<timer::duration>(recast, recastCapFloor(reductionCap));
         }
     }
     else if (PSpell->getSpellGroup() == SPELLGROUP_WHITE)
@@ -5858,16 +5917,21 @@ timer::duration CalculateSpellRecastTime(CBattleEntity* PEntity, CSpell* PSpell)
         if (PEntity->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Celerity))
         {
             recast = std::chrono::floor<std::chrono::milliseconds>(recast * 0.60); // 40% reduction from Celerity alone
-            recast = std::max<timer::duration>(recast, recastCapFloor(alacrityCelerityRecastReductionCap));
 
-            // Only apply bonus mod if the spell element matches the weather.
+            auto reductionCap = recastReductionCap;
+
+            // the relic feet bonus only applies when the spell element matches the weather, and only then does the cap extend to 90%
             if (battleutils::WeatherMatchesElement(battleutils::GetWeather(PEntity, false), static_cast<uint8>(PSpell->getElement())))
             {
                 uint16 bonus = PEntity->getMod(xi::Mod::ALACRITY_CELERITY_EFFECT);
-
-                recast = std::chrono::floor<std::chrono::milliseconds>(recast * ((100 - bonus) / 100.0f));
-                recast = std::max<timer::duration>(recast, recastCapFloor(alacrityCelerityRecastReductionCap));
+                if (bonus > 0)
+                {
+                    recast       = std::chrono::floor<std::chrono::milliseconds>(recast * ((100 - bonus) / 100.0f));
+                    reductionCap = alacrityCelerityRecastReductionCap;
+                }
             }
+
+            recast = std::max<timer::duration>(recast, recastCapFloor(reductionCap));
         }
     }
 
@@ -5942,23 +6006,36 @@ bool RemoveAmmo(CCharEntity* PChar, int quantity)
             uint8 slot = eloc ? eloc->Slot : 0;
             uint8 loc  = eloc ? static_cast<uint8>(eloc->Container) : 0;
             charutils::UnequipItem(PChar, SLOT_AMMO);
-            PChar->RequestPersist(CHAR_PERSIST::EQUIP);
-            charutils::UpdateItem(PChar, loc, slot, -quantity);
-            PChar->pushPacket<GP_SERV_COMMAND_ITEM_SAME>(PChar);
+            if (auto transaction = ItemClaimTransaction::start(PChar); !transaction || !transaction->take(loc, slot, quantity) || !transaction->commit())
+            {
+                ShowErrorFmt("battleutils: {} did not spend {} ammo in slot {}", PChar->getName(), quantity, slot);
+            }
+            else
+            {
+                PChar->pushPacket<GP_SERV_COMMAND_ITEM_SAME>(PChar);
+            }
+
             return true;
         }
         else
         {
             auto ammoLoc = PChar->equipLocation(SLOT_AMMO);
-            charutils::UpdateItem(PChar, static_cast<uint8>(ammoLoc->Container), ammoLoc->Slot, -quantity);
-            PChar->pushPacket<GP_SERV_COMMAND_ITEM_SAME>(PChar);
+            if (auto transaction = ItemClaimTransaction::start(PChar); !transaction || !transaction->take(static_cast<uint8>(ammoLoc->Container), ammoLoc->Slot, quantity) || !transaction->commit())
+            {
+                ShowErrorFmt("battleutils: {} did not spend {} ammo in slot {}", PChar->getName(), quantity, ammoLoc->Slot);
+            }
+            else
+            {
+                PChar->pushPacket<GP_SERV_COMMAND_ITEM_SAME>(PChar);
+            }
+
             return false;
         }
     }
     return false;
 }
 
-int32 GetMeritValue(CBattleEntity* PEntity, MERIT_TYPE merit)
+int32 GetMeritValue(CBattleEntity* PEntity, xi::Merit merit)
 {
     if (PEntity->objtype == TYPE_PC)
     {
@@ -5967,7 +6044,7 @@ int32 GetMeritValue(CBattleEntity* PEntity, MERIT_TYPE merit)
     return 0;
 }
 
-int32 GetScaledItemModifier(CBattleEntity* PEntity, CItemEquipment* PItem, xi::Mod mod)
+int32 GetScaledItemModifier(CBattleEntity* PEntity, CItemEquipment* PItem, xi::Mod mod, bool isDelevel /* = false */)
 {
     if (!PEntity || !PItem)
     {
@@ -5975,7 +6052,11 @@ int32 GetScaledItemModifier(CBattleEntity* PEntity, CItemEquipment* PItem, xi::M
         return 0;
     }
 
-    if (PEntity->GetMLevel() < PItem->getReqLvl())
+    // When a player delevels - their level has already been decremented by the time we perform this check
+    // To avoid not removing all of the stats given upon equip, we run this check with the previous level.
+    int playerLevel = isDelevel ? PEntity->GetMLevel() + 1 : PEntity->GetMLevel();
+
+    if (playerLevel < PItem->getReqLvl())
     {
         auto modAmount = PItem->getModifier(mod);
         switch (mod)

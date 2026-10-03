@@ -30,7 +30,7 @@ auto GP_CLI_COMMAND_SCENARIOITEM::validate(MapSession* PSession, const CCharEnti
         .blockedBy({ BlockedState::InEvent })
         .mustEqual(this->UniqueNo, PChar->id, "Character ID mismatch")
         .mustEqual(this->ActIndex, PChar->targid, "Character targid mismatch")
-        .range("TableIndex", this->TableIndex, 0, PChar->keys.tables.size());
+        .range("TableIndex", this->TableIndex, 0, PChar->keys.tables.size() - 1);
 }
 
 void GP_CLI_COMMAND_SCENARIOITEM::process(MapSession* PSession, CCharEntity* PChar) const
@@ -45,7 +45,7 @@ void GP_CLI_COMMAND_SCENARIOITEM::process(MapSession* PSession, CCharEntity* PCh
 
             if ((flags >> bit) & 1)
             {
-                charutils::markSeenKeyItem(PChar, static_cast<KeyItem>(keyItemId));
+                charutils::markSeenKeyItem(PChar, static_cast<xi::KeyItem>(keyItemId));
             }
         }
     }

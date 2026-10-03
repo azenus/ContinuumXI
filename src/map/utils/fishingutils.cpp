@@ -47,13 +47,16 @@
 
 #include "battleutils.h"
 #include "charutils.h"
+#include "data/enums/detects.h"
+#include "data/enums/key_item.h"
 #include "data/enums/mob_mod.h"
 #include "data/enums/weather.h"
 #include "enums/chat_message_type.h"
 #include "enums/four_cc.h"
-#include "enums/key_items.h"
 #include "enums/msg_std.h"
 #include "item_container.h"
+#include "items/exdata/fish.h"
+#include "items/transactions/item_claim.h"
 #include "itemutils.h"
 #include "packets/c2s/0x110_fishing_2.h"
 #include "packets/s2c/0x029_battle_message.h"
@@ -480,7 +483,7 @@ uint8 CalculateHookTime(CCharEntity* PChar, Legendary legendary, uint32 legendar
         hookTime += 10;
     }
 
-    if (charutils::hasKeyItem(PChar, KeyItem::MOOCHING) && (bait->baitID == DRILL_CALAMARY || bait->baitID == DWARF_PUGIL))
+    if (charutils::hasKeyItem(PChar, xi::KeyItem::Mooching) && (bait->baitID == DRILL_CALAMARY || bait->baitID == DWARF_PUGIL))
     {
         hookTime += 30;
     }
@@ -1377,9 +1380,14 @@ bool BaitLoss(CCharEntity* PChar, RemoveFly removeFly, SendUpdate sendUpdate)
                 {
                     charutils::UnequipItem(PChar, SLOT_AMMO);
                 }
-                charutils::UpdateItem(PChar, PBait->getLocationID(), PBait->getSlotID(), -1);
+                const uint8 baitLocation = PBait->getLocationID();
+                const uint8 baitSlot     = PBait->getSlotID();
 
-                if (sendUpdate)
+                if (auto transaction = ItemClaimTransaction::start(PChar); !transaction || !transaction->take(baitLocation, baitSlot, 1) || !transaction->commit())
+                {
+                    ShowErrorFmt("fishingutils: {} did not lose bait in slot {}", PChar->getName(), baitSlot);
+                }
+                else if (sendUpdate)
                 {
                     PChar->pushPacket<GP_SERV_COMMAND_ITEM_SAME>(PChar);
                 }
@@ -1410,9 +1418,16 @@ void RodBreak(CCharEntity* PChar)
     {
         BaitLoss(PChar, RemoveFly::Yes, SendUpdate::No);
         charutils::UnequipItem(PChar, SLOT_RANGED);
-        uint8 location = PRanged->getLocationID();
-        charutils::UpdateItem(PChar, location, PRanged->getSlotID(), -1);
-        charutils::AddItem(PChar, location, PRod->brokenRodId, 1);
+        uint8 location    = PRanged->getLocationID();
+        uint8 rodSlot     = PRanged->getSlotID();
+        auto  transaction = ItemClaimTransaction::start(PChar);
+        if (!transaction ||
+            !transaction->take(location, rodSlot, 1) ||
+            !transaction->give(location, PRod->brokenRodId, 1) ||
+            !transaction->commit())
+        {
+            ShowErrorFmt("fishingutils: {} kept an unbroken rod in slot {}", PChar->getName(), rodSlot);
+        }
         PChar->pushPacket<GP_SERV_COMMAND_ITEM_SAME>(PChar);
     }
 }
@@ -1520,12 +1535,19 @@ int32 CatchFish(CCharEntity* PChar, uint16 FishID, BigFish bigFish, uint16 lengt
 
         if (bigFish && length > 1 && weight > 1)
         {
-            Fish->SetLength(length);
-            Fish->SetWeight(weight);
+            auto& fishData  = Fish->exdata<Exdata::Fish>();
+            fishData.Size   = length;
+            fishData.Weight = weight;
         }
 
         Fish->setQuantity(Count);
-        charutils::AddItem(PChar, LOC_INVENTORY, std::move(Fish));
+
+        auto transaction = ItemClaimTransaction::start(PChar);
+        if (!transaction || !transaction->give(LOC_INVENTORY, std::move(Fish)) || !transaction->commit())
+        {
+            ShowErrorFmt("fishingutils: {} did not receive the fish they caught", PChar->getName());
+            return 0;
+        }
 
         if (Count > 1)
         {
@@ -1563,7 +1585,12 @@ int32 CatchItem(CCharEntity* PChar, uint16 ItemID, uint8 Count = 1)
             return 0;
         }
 
-        charutils::AddItem(PChar, LOC_INVENTORY, ItemID, Count);
+        auto transaction = ItemClaimTransaction::start(PChar);
+        if (!transaction || !transaction->give(LOC_INVENTORY, ItemID, Count) || !transaction->commit())
+        {
+            ShowErrorFmt("fishingutils: {} did not receive item {} they caught", PChar->getName(), ItemID);
+            return 0;
+        }
 
         if (Count > 1)
         {
@@ -2205,7 +2232,7 @@ fishresponse_t* FishingCheck(CCharEntity* PChar, uint8 fishingSkill, rod_t* rod,
             }
 
             // uint16 baitPower = fish.second; //@TODO: implement this in later patch
-            if ((fishingSkill >= fishIter->maxSkill || fishIter->maxSkill - fishingSkill <= 100) && (fishIter->reqKeyItem == KeyItem::NONE || charutils::hasKeyItem(PChar, fishIter->reqKeyItem)))
+            if ((fishingSkill >= fishIter->maxSkill || fishIter->maxSkill - fishingSkill <= 100) && (fishIter->reqKeyItem == xi::KeyItem::None || charutils::hasKeyItem(PChar, fishIter->reqKeyItem)))
             { // Key item okay
                 if (!fishIter->quest_only && isFishPoolDepleted(PChar->getZone(), area->areaId, fishIter->fishID))
                 {
@@ -2232,7 +2259,7 @@ fishresponse_t* FishingCheck(CCharEntity* PChar, uint8 fishingSkill, rod_t* rod,
                 continue;
             }
 
-            if (item->quest_only || item->reqKeyItem == KeyItem::NONE || charutils::hasKeyItem(PChar, item->reqKeyItem))
+            if (item->quest_only || item->reqKeyItem == xi::KeyItem::None || charutils::hasKeyItem(PChar, item->reqKeyItem))
             { // Key item okay
                 uint16 hookChance = 100;
                 if (item->quest < 255 && item->log < 255)
@@ -2717,10 +2744,22 @@ void FishingAction(CCharEntity* PChar, const GP_CLI_COMMAND_FISHING_2_MODE mode,
     uint16 MessageOffset = GetMessageOffset(PChar->getZone());
     uint32 vanaTime      = earth_time::vanadiel_timestamp();
 
+    if (PChar->fishingToken == 0)
+    {
+        PChar->animation = xi::Animation::NewFishingStop;
+        return;
+    }
+
     switch (mode)
     {
         case GP_CLI_COMMAND_FISHING_2_MODE::RequestCheckHook:
         {
+            if (PChar->animation != xi::Animation::NewFishingStart)
+            {
+                CatchNothing(PChar, FISHINGFAILTYPE_NONE);
+                return;
+            }
+
             if (vanaTime < PChar->lastCastTime + PChar->hookDelay - 2)
             {
                 CatchNothing(PChar, FISHINGFAILTYPE_NONE);
@@ -2911,6 +2950,8 @@ void FishingAction(CCharEntity* PChar, const GP_CLI_COMMAND_FISHING_2_MODE mode,
                     PChar->hookedFish->successtype = FISHINGSUCCESSTYPE_NONE;
                 }
             }
+
+            PChar->fishingToken = 0;
         }
         break;
 
@@ -2952,15 +2993,14 @@ void FishingAction(CCharEntity* PChar, const GP_CLI_COMMAND_FISHING_2_MODE mode,
     }
 }
 
-auto GetFish(uint16 itemid) -> std::unique_ptr<CItemFish>
+auto GetFish(uint16 itemid) -> std::unique_ptr<CItem>
 {
-    const CItem* PItem = xi::items::lookup(itemid);
-
-    if (PItem && FishList[itemid])
+    if (!FishList[itemid])
     {
-        return std::make_unique<CItemFish>(*PItem);
+        return nullptr;
     }
-    return nullptr;
+
+    return xi::items::spawn(itemid);
 }
 
 /************************************************************************
@@ -3065,7 +3105,7 @@ void LoadFishItems()
         fish->item            = rset->get<bool>("item");
         fish->maxhook         = rset->get<uint8>("max_hook");
         fish->rarity          = rset->get<uint16>("rarity");
-        fish->reqKeyItem      = rset->get<KeyItem>("required_keyitem");
+        fish->reqKeyItem      = rset->get<xi::KeyItem>("required_keyitem");
 
         fish->reqFish = new std::vector<uint16>();
 

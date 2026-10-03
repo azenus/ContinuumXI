@@ -62,9 +62,10 @@
 
 #include "packets/s2c/0x017_chat_std.h"
 #include "packets/s2c/0x05a_motionmes.h"
-#include "packets/s2c/0x0f9_res.h"
 
+#include "persist_batch.h"
 #include "utils/battleutils.h"
+
 #include "utils/charutils.h"
 #include "utils/instanceutils.h"
 #include "utils/itemutils.h"
@@ -80,11 +81,15 @@
 #include "battlefield.h"
 #include "conquest_system.h"
 #include "daily_system.h"
+#include "data/datasets/zones/mobs/dataset.h"
+#include "data/datasets/zones/npcs/dataset.h"
 #include "data/enums/mob_mod.h"
+#include "data/loader.h"
 #include "fishingcontest.h"
 #include "instance.h"
 #include "ipc_client.h"
 #include "items/item_furnishing.h"
+#include "items/transactions/npc_trade.h"
 #include "map/navmesh/navmesh.h"
 #include "map_engine.h"
 #include "mobskill.h"
@@ -94,9 +99,8 @@
 #include "roe.h"
 #include "spell.h"
 #include "status_effect_container.h"
-#include "timetriggers.h"
 #include "trade_container.h"
-#include "transport.h"
+#include "transports/elevator_handler.h"
 #include "weapon_skill.h"
 #include "zone.h"
 #include "zone_entities.h"
@@ -104,11 +108,8 @@
 #include <common/types/hash_map.h>
 
 #include <array>
-#include <cctype>
-#include <cmath>
 #include <filesystem>
 #include <limits>
-#include <numeric>
 #include <ranges>
 #include <string>
 
@@ -155,6 +156,26 @@ HashMap<uint32, sol::table>  customMenuContext;
 
 LuaCache luaCache;
 
+// The xi.entityData root, or nil when nothing has been stored yet. Every step is type checked:
+// a script is free to leave a non-table at either name, and raising out of ~CBaseEntity() would
+// take the process with it.
+auto entityDataRoot() -> sol::table
+{
+    const auto xiTable = lua["xi"].get<sol::optional<sol::table>>();
+    if (!xiTable)
+    {
+        return sol::lua_nil;
+    }
+
+    const auto root = (*xiTable)["entityData"].get<sol::optional<sol::table>>();
+    if (!root)
+    {
+        return sol::lua_nil;
+    }
+
+    return *root;
+}
+
 } // namespace
 
 namespace detail
@@ -184,6 +205,39 @@ auto findGlobalLuaFunction(const std::string& funcName) -> sol::function
     }
 
     return sol::lua_nil;
+}
+
+auto getEntityDataTable(CBaseEntity* PEntity, CreateEntityData create) -> sol::table
+{
+    TracyZoneScoped;
+
+    if (PEntity == nullptr || !lua.lua_state())
+    {
+        return sol::lua_nil;
+    }
+
+    if (create)
+    {
+        // The no-argument get_or_create only builds a table when the key is missing.
+        auto xiTable = lua["xi"].get_or_create<sol::table>();
+        auto root    = xiTable["entityData"].get_or_create<sol::table>();
+
+        return root[PEntity->serial()].get_or_create<sol::table>();
+    }
+
+    const auto root = entityDataRoot();
+    if (!root.valid())
+    {
+        return sol::lua_nil;
+    }
+
+    const auto bucket = root[PEntity->serial()].get<sol::optional<sol::table>>();
+    if (!bucket)
+    {
+        return sol::lua_nil;
+    }
+
+    return *bucket;
 }
 
 } // namespace detail
@@ -335,6 +389,7 @@ void init(IPP mapIPP, bool isRunningInCI)
     lua.set_function("GetSynergyRecipeByTrade", &luautils::GetSynergyRecipeByTrade);
     lua.set_function("ReloadSynthRecipes", &synthutils::LoadSynthRecipes);
     lua.set_function("LoadExpDifficultyCurves", &luautils::LoadExpDifficultyCurves);
+    lua.set_function("ReloadExperienceData", &charutils::LoadExpTable);
 
     // Fishing Contest Functions
     lua.set_function("GetFishingContest", &luautils::GetFishingContest);
@@ -689,6 +744,27 @@ sol::function getEntityCachedFunction(CBaseEntity* PEntity, const std::string& f
         });
 }
 
+void resetEntityData(CBaseEntity* PEntity)
+{
+    TracyZoneScoped;
+
+    // Runs from ~CBaseEntity(). Zone teardown frees entities before the state is closed, so the
+    // state check is belt and braces rather than the thing that makes this safe.
+    if (PEntity == nullptr || !lua.lua_state())
+    {
+        return;
+    }
+
+    // Not const: sol only exposes the assigning proxy on a mutable table.
+    auto root = entityDataRoot();
+    if (!root.valid())
+    {
+        return;
+    }
+
+    root[PEntity->serial()] = sol::lua_nil;
+}
+
 sol::function getSpellCachedFunction(CSpell* PSpell, std::string funcName)
 {
     TracyZoneScoped;
@@ -832,12 +908,9 @@ void LoadLuaObjectFromFile(const std::string& filename, bool overwriteCurrentEnt
             return;
         }
 
-        // Commands are a special case, since they are not a "true" module
-        const sol::table cmdTable = result;
-        if (cmdTable["cmdprops"].valid() && cmdTable["onTrigger"].valid())
-        {
-            lua[sol::create_if_nil]["xi"]["commands"][parts.back()] = cmdTable;
-        }
+        // Modules self-register on execution, and the registries were drained
+        // at startup, so drop this re-run's entries.
+        moduleutils::ClearLuaModuleRegistries();
 
         ShowInfo("[FileWatcher] RE-RUNNING MODULE FILE %s", filename);
         return;
@@ -1144,7 +1217,63 @@ void LoadExpDifficultyCurves(const sol::table& expToDifficultyTable, const uint8
     charutils::SetExpDifficultyCurve(expDifficultyTable, iep);
 }
 
-void PopulateIDLookups(const xi::ZoneId zoneId, const std::string& zoneName)
+auto SetupExperiencePoints() -> Maybe<ExperiencePointsTable>
+{
+    TracyZoneScoped;
+
+    if (!detail::findGlobalLuaFunction("xi.experiencePoints.calculate").valid())
+    {
+        ShowError("xi.experiencePoints.calculate function is not valid; experience points will not be calculated!");
+        return std::nullopt;
+    }
+
+    const sol::table baseTable = lua["xi"]["data"]["experiencePoints"]["baseTable"];
+    if (!baseTable.valid())
+    {
+        ShowError("xi.data.experiencePoints.baseTable is not valid; experience points will not be calculated!");
+        return std::nullopt;
+    }
+
+    ExperiencePointsTable expTable{};
+    for (int32 dLevel = -44; dLevel <= 15; ++dLevel)
+    {
+        const sol::table row = baseTable[dLevel];
+        if (!row.valid() || row.size() != 20)
+        {
+            ShowError("xi.data.experiencePoints.baseTable is missing a valid row for level difference %d.", dLevel);
+            return std::nullopt;
+        }
+
+        for (uint32 y = 0; y < 20; ++y)
+        {
+            expTable[dLevel + 44][y] = row[y + 1].get<uint16>();
+        }
+    }
+
+    return expTable;
+}
+
+auto CalculateExperiencePoints(CCharEntity* PMember, CMobEntity* PMob, const CalcExpInput& input) -> Maybe<CalcExpResult>
+{
+    TracyZoneScoped;
+
+    auto data = lua.create_table_with("baseExp", input.baseExp, "mobDifficulty", input.mobDifficulty, "memberLevel", input.memberLevel, "highestMemberLevel", input.highestMemberLevel, "partySize", input.partySize);
+    data.set("memberTNL", input.memberTNL, "highestMemberTNL", input.highestMemberTNL, "regionId", input.regionId, "chainNumber", input.chainNumber, "chainActive", input.chainActive);
+
+    const auto result = callGlobal<sol::table>("xi.experiencePoints.calculate", PMember, PMob, data);
+    if (!result.valid())
+    {
+        return std::nullopt;
+    }
+
+    CalcExpResult calcResult{};
+    calcResult.exp         = result["exp"].get_or(0);
+    calcResult.wasChained  = result["chainActive"].get_or(false);
+    calcResult.chainWindow = result["chainWindow"].get_or(0);
+    return calcResult;
+}
+
+void PopulateIDLookups(const xi::ZoneId zoneId, const std::string& zoneName, const ZoneEntityRecords& preloaded)
 {
     TracyZoneScoped;
 
@@ -1170,45 +1299,67 @@ void PopulateIDLookups(const xi::ZoneId zoneId, const std::string& zoneName)
         effectiveZones.push_back(overlayRset->get<uint16>("overlay_id"));
     }
 
-    const auto idRange = [](uint16 effectiveZone) -> std::pair<uint32, uint32>
-    {
-        const uint32 idMin = (static_cast<uint32>(effectiveZone) << 12) | 0x01000000;
-        return { idMin, idMin + 0xFFF };
-    };
-
-    // Mobs
     for (auto effectiveZone : effectiveZones)
     {
-        const auto [idMin, idMax] = idRange(effectiveZone);
-        const auto rset           = db::preparedStmt("SELECT mobname, mobid FROM mob_spawn_points "
-                                                     "WHERE mobid BETWEEN ? AND ? "
-                                                     "ORDER BY mobid ASC",
-                                                     idMin,
-                                                     idMax);
-        FOR_DB_MULTIPLE_RESULTS(rset)
-        {
-            const auto name = rset->get<std::string>("mobname");
-            const auto id   = rset->get<uint32>("mobid");
+        const auto zone = static_cast<xi::ZoneId>(effectiveZone);
 
-            lookup[name].emplace_back(id);
+        // startup and reloads pass no records, so they read the files
+        const auto handedIn = zone == zoneId;
+
+        const auto fallbackMobs = [&]() -> std::optional<xi::data::Mobs>
+        {
+            if (handedIn && preloaded.Mobs)
+            {
+                return std::nullopt;
+            }
+
+            return xi::data::loadZoneFile<xi::data::datasets::zones::mobs::Dataset>(zone);
+        }();
+
+        const auto fallbackNpcs = [&]() -> std::optional<xi::data::Npcs>
+        {
+            if (handedIn && preloaded.Npcs)
+            {
+                return std::nullopt;
+            }
+
+            return xi::data::loadZoneFile<xi::data::datasets::zones::npcs::Dataset>(zone);
+        }();
+
+        const auto* mobs = [&]() -> const xi::data::Mobs*
+        {
+            if (fallbackMobs)
+            {
+                return &*fallbackMobs;
+            }
+
+            return handedIn ? preloaded.Mobs : nullptr;
+        }();
+
+        const auto* npcs = [&]() -> const xi::data::Npcs*
+        {
+            if (fallbackNpcs)
+            {
+                return &*fallbackNpcs;
+            }
+
+            return handedIn ? preloaded.Npcs : nullptr;
+        }();
+
+        if (mobs)
+        {
+            for (const auto& spawn : mobs->Spawns)
+            {
+                lookup[spawn.Script].emplace_back(spawn.Id);
+            }
         }
-    }
 
-    // NPCs
-    for (auto effectiveZone : effectiveZones)
-    {
-        const auto [idMin, idMax] = idRange(effectiveZone);
-        const auto rset           = db::preparedStmt("SELECT name, npcid FROM npc_list "
-                                                     "WHERE npcid BETWEEN ? AND ? "
-                                                     "ORDER BY npcid ASC",
-                                                     idMin,
-                                                     idMax);
-        FOR_DB_MULTIPLE_RESULTS(rset)
+        if (npcs)
         {
-            const auto name = rset->get<std::string>("name");
-            const auto id   = rset->get<uint32>("npcid");
-
-            lookup[name].emplace_back(id);
+            for (const auto& npc : *npcs)
+            {
+                lookup[npc.Script].emplace_back(npc.Id);
+            }
         }
     }
 
@@ -1327,7 +1478,7 @@ void PopulateIDLookupsByFilename(Maybe<std::string> maybeFilename)
             return xi::ZoneId::Unknown;
         }();
 
-        PopulateIDLookups(zoneId, zoneName);
+        PopulateIDLookups(zoneId, zoneName, {});
     };
 
     if (!maybeFilename)
@@ -1354,15 +1505,13 @@ void PopulateIDLookupsByFilename(Maybe<std::string> maybeFilename)
     }
 }
 
-void PopulateIDLookupsByZone(Maybe<xi::ZoneId> maybeZoneId)
+void PopulateIDLookupsByZone(Maybe<xi::ZoneId> maybeZoneId, const ZoneEntityRecords& preloaded)
 {
     TracyZoneScoped;
 
-    const auto handleZone = [&](CZone* PZone)
+    const auto handleZone = [&](CZone* PZone, const ZoneEntityRecords& records)
     {
-        const auto zoneId   = PZone->GetID();
-        const auto zoneName = PZone->getName();
-        PopulateIDLookups(zoneId, zoneName);
+        PopulateIDLookups(PZone->GetID(), PZone->getName(), records);
     };
 
     if (!maybeZoneId.has_value())
@@ -1372,13 +1521,13 @@ void PopulateIDLookupsByZone(Maybe<xi::ZoneId> maybeZoneId)
             {
                 if (PZone->GetIP() != 0)
                 {
-                    handleZone(PZone);
+                    handleZone(PZone, {});
                 }
             });
     }
     else
     {
-        handleZone(zoneutils::GetZone(maybeZoneId.value()));
+        handleZone(zoneutils::GetZone(maybeZoneId.value()), preloaded);
     }
 }
 
@@ -1777,8 +1926,6 @@ uint8 VanadielDayElement()
  ************************************************************************/
 uint32 GetSystemTime()
 {
-    TracyZoneScoped;
-
     return earth_time::timestamp();
 }
 
@@ -2191,7 +2338,7 @@ auto GetTextIDVariable(const xi::ZoneId ZoneID, const char* variable) -> int32
  *                                                                       *
  ************************************************************************/
 
-bool IsContentEnabled(const std::string& contentTag)
+auto IsContentEnabled(const std::string& contentTag) -> bool
 {
     TracyZoneScoped;
 
@@ -2211,6 +2358,17 @@ bool IsContentEnabled(const std::string& contentTag)
     }
 
     return true;
+}
+
+// Use the uppercased enum slug as ENABLE_ suffix
+auto IsContentEnabled(const xi::Content content) -> bool
+{
+    if (content == xi::Content::None)
+    {
+        return true;
+    }
+
+    return IsContentEnabled(to_upper(std::string{ xi::data::EnumTraits<xi::Content>::toName(content) }));
 }
 
 void OnZoneInitialize(const xi::ZoneId ZoneID)
@@ -2275,19 +2433,25 @@ void OnGameIn(CCharEntity* PChar, bool zoning)
 
     ShowTraceFmt("luautils::OnGameIn: {}", PChar->getName());
 
-    callGlobal<void>("xi.player.onGameIn", PChar, PChar->GetPlayTime(false) == 0s, zoning);
+    // game time of 0 is not reliable to determine if the char needs the starter fame/gear
+    // You can DC in the intro CS when logging in and your playtime is non-zero
+    // However, in charCreate, it adds NEW_ADVENTURER title. so lets check that to determine if charCreate needs to be called
+    // `xi.player.onGameIn` calls `xi.player.charCreate` when the 2nd param is true
+    bool needsFirstLogin = !charutils::hasTitle(PChar, 206); // 206 == xi.title.NEW_ADVENTURER
+
+    callGlobal<void>("xi.player.onGameIn", PChar, needsFirstLogin, zoning);
 }
 
 void OnZoneIn(CCharEntity* PChar)
 {
     TracyZoneScoped;
 
-    CZone* destinationZone = zoneutils::GetZone(PChar->loc.destination);
+    CZone* destinationZone = zoneutils::GetZone(PChar->getZone());
     if (!destinationZone)
     {
         if (!PChar->inMogHouse())
         {
-            ShowWarning("Attempt to Zone In player to invalid/disabled zone %d.", PChar->loc.destination);
+            ShowWarning("Attempt to Zone In player to invalid/disabled zone %d.", PChar->getZone());
         }
         return;
     }
@@ -2617,6 +2781,15 @@ int32 OnEventFinish(CCharEntity* PChar, uint16 eventID, uint32 result)
     // Restore eventPreparation before potentially bailing out of function due to errors
     PChar->eventPreparation = previousPrep;
 
+    // a script that confirmed goods but never consumed them would keep the claim past the event
+    if (auto* offer = PChar->activeTransaction<NpcTradeTransaction>())
+    {
+        ShowWarningFmt("luautils::OnEventFinish: {} left a trade open at the end of event {} in {}", PChar->getName(), eventID, PChar->loc.zone->getName());
+
+        PChar->removeTransaction(offer);
+        PChar->TradeContainer->Clean();
+    }
+
     if (!func_result.valid())
     {
         sol::error err = func_result;
@@ -2644,7 +2817,7 @@ void OnTrade(CCharEntity* PChar, CBaseEntity* PNpc)
     auto onTradeFramework = lua["InteractionGlobal"]["onTrade"];
     auto onTrade          = getCachedFileFunction(filename, "onTrade");
 
-    auto result = onTradeFramework(PChar, PNpc, PChar->TradeContainer, onTrade);
+    auto result = onTradeFramework(PChar, PNpc, CLuaTradeContainer(PChar->TradeContainer, PChar), onTrade);
     if (!result.valid())
     {
         sol::error err = result;
@@ -4789,8 +4962,7 @@ void Terminate()
             PZone->ForEachChar(
                 [](CCharEntity* PChar)
                 {
-                    PChar->PersistData();
-                    charutils::SaveCharPosition(PChar);
+                    persist::flush(PChar, IsLogout::Yes);
                     charutils::SaveCharStats(PChar);
                     charutils::SaveCharExp(PChar, PChar->GetMJob());
                 });
@@ -4885,7 +5057,7 @@ auto OnInstanceLoadFailed(CZone* PZone) -> xi::ZoneId
     return result.get_type(0) == sol::type::number ? result.get<xi::ZoneId>(0) : xi::ZoneId::Unknown;
 }
 
-void OnInstanceTimeUpdate(CZone* PZone, CInstance* PInstance, uint32 time)
+void OnInstanceTimeUpdate(CZone* PZone, CInstance* PInstance, uint32 seconds)
 {
     TracyZoneScoped;
 
@@ -4897,7 +5069,7 @@ void OnInstanceTimeUpdate(CZone* PZone, CInstance* PInstance, uint32 time)
         return;
     }
 
-    auto result = onInstanceTimeUpdate(PInstance, time);
+    auto result = onInstanceTimeUpdate(PInstance, seconds);
     if (!result.valid())
     {
         sol::error err = result;
@@ -5029,23 +5201,21 @@ void OnInstanceComplete(CInstance* PInstance)
     }
 }
 
-void StartElevator(uint32 ElevatorID)
+void StartElevator(const xi::Elevator elevatorID)
 {
     TracyZoneScoped;
 
-    CTransportHandler::getInstance()->startElevator(ElevatorID);
+    ElevatorHandler::getInstance()->startElevator(elevatorID);
 }
 
-// Returns -1 if elevator is not found. Otherwise, returns the uint8 state.
-int16 GetElevatorState(uint8 id) // Returns -1 if elevator is not found. Otherwise, returns the uint8 state.
+// Reaches Lua as xi.elevatorState, or -1 when there is no such elevator.
+auto GetElevatorState(const xi::Elevator elevatorID) -> int16
 {
     TracyZoneScoped;
 
-    Elevator_t* elevator = CTransportHandler::getInstance()->getElevator(id);
-
-    if (elevator)
+    if (const auto state = ElevatorHandler::getInstance()->elevatorState(elevatorID))
     {
-        return elevator->state;
+        return static_cast<int16>(*state);
     }
 
     return -1;
@@ -5111,7 +5281,7 @@ void ClearCharVarFromAll(const std::string& varName)
     charutils::ClearCharVarFromAll(varName);
 }
 
-void OnTransportEvent(CCharEntity* PChar, xi::ZoneId prevZoneId, uint16 transportId)
+void OnTransportEvent(CCharEntity* PChar, xi::ZoneId prevZoneId, std::string_view transport)
 {
     TracyZoneScoped;
 
@@ -5123,7 +5293,7 @@ void OnTransportEvent(CCharEntity* PChar, xi::ZoneId prevZoneId, uint16 transpor
         return;
     }
 
-    auto result = onTransportEvent(PChar, prevZoneId, transportId);
+    auto result = onTransportEvent(PChar, prevZoneId, transport);
     if (!result.valid())
     {
         sol::error err = result;
@@ -5421,17 +5591,16 @@ sol::table GetFurthestValidPosition(CLuaBaseEntity* fromTarget, float distance, 
     CBaseEntity* entity = fromTarget->GetBaseEntity();
     position_t   pos    = nearPosition(entity->loc.p, distance, theta);
 
-    float validPos[3];
-    bool  success = entity->loc.zone->navMesh()->findFurthestValidPoint(entity->loc.p, pos, validPos);
-    if (!success)
+    const auto validPos = entity->loc.zone->navMesh()->findFurthestValidPoint(entity->loc.p, pos);
+    if (!validPos)
     {
         return sol::lua_nil;
     }
 
     sol::table outPos = lua.create_table();
-    outPos["x"]       = validPos[0];
-    outPos["y"]       = validPos[1];
-    outPos["z"]       = validPos[2];
+    outPos["x"]       = validPos->x;
+    outPos["y"]       = validPos->y;
+    outPos["z"]       = validPos->z;
 
     return outPos;
 }
@@ -5478,11 +5647,34 @@ void OnPlayerVolunteer(CCharEntity* PChar, const std::string& text)
     callGlobal<void>("xi.player.onPlayerVolunteer", PChar, text);
 }
 
-bool OnChocoboDig(CCharEntity* PChar)
+auto OnChocoboDig(CCharEntity* PChar) -> ChocoboDigResult
 {
     TracyZoneScoped;
 
-    return callGlobal<bool>("xi.chocoboDig.start", PChar);
+    auto func = detail::findGlobalLuaFunction("xi.chocoboDig.start");
+    if (!func.valid())
+    {
+        ShowErrorFmt("luautils::OnChocoboDig: xi.chocoboDig.start: Function not found");
+        return {};
+    }
+
+    const auto result = func(PChar);
+    if (!result.valid())
+    {
+        const auto err = result.get<sol::error>();
+        ShowErrorFmt("luautils::OnChocoboDig: {}", err.what());
+        return {};
+    }
+
+    const auto returned = [&](const int index)
+    {
+        return result.get_type(index) == sol::type::boolean && result.get<bool>(index);
+    };
+
+    return ChocoboDigResult{
+        .dug        = returned(0),
+        .keepGreens = returned(1),
+    };
 }
 
 // Loads a Lua function with a fallback hierarchy
@@ -6011,6 +6203,13 @@ CBaseEntity* GenerateDynamicEntity(CZone* PZone, CInstance* PInstance, sol::tabl
         const auto respawn = table["respawn"].get_or<uint32>(0);
         if (respawn > 0)
         {
+            if (PMob->m_bReleaseTargIDOnDisappear)
+            {
+                ShowWarning("luautils::GenerateDynamicEntity: %s in zone %s asks for respawn but also releaseIdOnDisappear. It will not respawn.",
+                            PMob->name.c_str(),
+                            PZone->getName().c_str());
+            }
+
             PMob->m_RespawnTime  = std::chrono::seconds(respawn);
             PMob->m_AllowRespawn = true;
         }

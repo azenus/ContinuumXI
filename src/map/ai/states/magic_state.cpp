@@ -40,6 +40,14 @@
 #include "utils/battleutils.h"
 #include "utils/zoneutils.h"
 
+namespace
+{
+
+// distance a player has to cover before a cast counts them as having moved
+constexpr float movementThreshold = 0.3f;
+
+} // namespace
+
 CMagicState::CMagicState(xi::Badge<CState>, CBattleEntity* PEntity, const EntityId& target, SpellID spellid, uint8 flags)
 : CState(PEntity, target)
 , m_PEntity(PEntity)
@@ -87,6 +95,11 @@ auto CMagicState::init() -> StateErrorOr<void>
 
     m_castTime = battleutils::CalculateSpellCastTime(m_PEntity, this);
     m_startPos = m_PEntity->loc.p;
+
+    if (const auto* PChar = dynamic_cast<CCharEntity*>(m_PEntity))
+    {
+        m_startedMoving = PChar->m_lastMoveDistance > movementThreshold;
+    }
 
     auto targetID = PTarget->id;
 
@@ -138,6 +151,9 @@ auto CMagicState::Update(timer::time_point tick) -> bool
     auto*      PTarget = m_PEntity->IsValidTarget(target(), m_PSpell->getValidTarget(), m_errorMsg);
     const auto msg     = MsgBasic::IsInterrupted;
 
+    // mobs, pets and trusts only print the interrupted message when a hit or status interrupted them
+    const bool quiet = m_PEntity->objtype != TYPE_PC;
+
     auto isTargetValid = [&]()
     {
         // m_PEntity->IsValidTarget checks if the target is dead and returns nullptr if so, so we don't need to duplicate it here.
@@ -166,7 +182,7 @@ auto CMagicState::Update(timer::time_point tick) -> bool
         if (!isTargetValid())
         {
             // guessed, but cancels correctly.
-            m_PEntity->OnCastInterrupted(*this, action, msg, false);
+            m_PEntity->OnCastInterrupted(*this, action, msg, quiet);
             m_PEntity->loc.zone->PushPacket(m_PEntity, CHAR_INRANGE_SELF, std::make_unique<GP_SERV_COMMAND_BATTLE2>(action));
 
             Complete();
@@ -187,7 +203,7 @@ auto CMagicState::Update(timer::time_point tick) -> bool
         // CanCastSpell also does a range check which we don't want to check during midcast - mobs don't cancel spells during casting for being out of range
         if (!isTargetValid() || !CanCastSpell(PTarget, true) || HasMoved())
         {
-            m_PEntity->OnCastInterrupted(*this, action, msg, false);
+            m_PEntity->OnCastInterrupted(*this, action, msg, quiet);
 
             Complete();
             return false;
@@ -251,6 +267,13 @@ auto CMagicState::Update(timer::time_point tick) -> bool
         if (battleutils::IsParalyzed(m_PEntity))
         {
             ActionInterrupts::MagicParalyzed(m_PEntity, m_PSpell.get(), PTarget);
+
+            // If Paralyzed entity is a mob, reset their magic cooldown.
+            if (auto* mobController = dynamic_cast<CMobController*>(m_PEntity->PAI->GetController()))
+            {
+                mobController->OnCastStopped(*this, action);
+            }
+
             Complete();
             return false;
         }
@@ -258,6 +281,13 @@ auto CMagicState::Update(timer::time_point tick) -> bool
         if (battleutils::IsIntimidated(m_PEntity, PTarget))
         {
             ActionInterrupts::MagicIntimidated(m_PEntity, m_PSpell.get(), PTarget);
+
+            // If Intimidated entity is a mob, reset their magic cooldown.
+            if (auto* mobController = dynamic_cast<CMobController*>(m_PEntity->PAI->GetController()))
+            {
+                mobController->OnCastStopped(*this, action);
+            }
+
             Complete();
             return false;
         }
@@ -318,8 +348,9 @@ void CMagicState::Cleanup(timer::time_point tick)
 {
     if (!IsCompleted())
     {
-        action_t action{};
-        m_PEntity->OnCastInterrupted(*this, action, MsgBasic::IsInterrupted, false);
+        action_t   action{};
+        const bool quiet = m_PEntity->objtype != TYPE_PC;
+        m_PEntity->OnCastInterrupted(*this, action, MsgBasic::IsInterrupted, quiet);
     }
 }
 
@@ -620,9 +651,14 @@ auto CMagicState::HasMoved() const -> bool
         return false;
     }
 
+    if (m_startedMoving)
+    {
+        return true;
+    }
+
     float charDistance = distance(m_startPos, m_PEntity->loc.p, true);
 
-    return charDistance > 0.3;
+    return charDistance > movementThreshold;
 }
 
 void CMagicState::TryInterrupt(CBattleEntity* PAttacker)

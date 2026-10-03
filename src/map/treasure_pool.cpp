@@ -27,6 +27,7 @@
 #include "packets/s2c/0x0d3_trophy_solution.h"
 
 #include "item_container.h"
+#include "items/transactions/item_claim.h"
 #include "treasure_pool.h"
 #include "utils/charutils.h"
 #include "utils/itemutils.h"
@@ -164,10 +165,10 @@ void CTreasurePool::delMember(CCharEntity* PChar)
 
 uint8 CTreasurePool::addItem(uint16 ItemID, CBaseEntity* PEntity)
 {
-    uint8             SlotID     = 0;
-    uint8             FreeSlotID = -1;
-    timer::time_point oldest     = timer::time_point::max();
-    const CItem*      PNewItem   = xi::items::lookup(ItemID);
+    uint8                    SlotID     = 0;
+    uint8                    FreeSlotID = -1;
+    Maybe<timer::time_point> oldest     = timer::time_point::max();
+    const CItem*             PNewItem   = xi::items::lookup(ItemID);
 
     if (!PNewItem)
     {
@@ -255,7 +256,7 @@ uint8 CTreasurePool::addItem(uint16 ItemID, CBaseEntity* PEntity)
 
     if (SlotID == 10)
     {
-        m_PoolItems[FreeSlotID].TimeStamp = timer::start_time;
+        m_PoolItems[FreeSlotID].TimeStamp = std::nullopt;
         checkTreasureItem(timer::now(), FreeSlotID);
     }
 
@@ -337,14 +338,12 @@ void CTreasurePool::lotItem(CCharEntity* PChar, uint8 SlotID, uint16 Lot)
     // Cannot lot if player's inventory is full
     if (PChar->getStorage(LOC_INVENTORY)->GetFreeSlotsCount() == 0)
     {
-        ShowError(fmt::format("Player {} is trying to lot on item {} while full inventory (Packet injection)!", PChar->getName(), m_PoolItems[SlotID].ID));
         return;
     }
 
     // Cannot lot if item is RARE and player already has it
     if (PItem->hasFlag(ItemFlag::Rare) && charutils::HasItem(PChar, m_PoolItems[SlotID].ID))
     {
-        ShowError(fmt::format("Player {} is trying to lot on item {} (Rare) while already holding one (Packet injection)! ", PChar->getName(), m_PoolItems[SlotID].ID));
         return;
     }
 
@@ -497,7 +496,7 @@ void CTreasurePool::checkTreasureItem(timer::time_point tick, uint8 SlotID)
         return;
     }
 
-    if ((tick - m_PoolItems[SlotID].TimeStamp) > treasure_livetime ||
+    if (!m_PoolItems[SlotID].TimeStamp.has_value() || (tick - *m_PoolItems[SlotID].TimeStamp) > treasure_livetime ||
         (memberCount() == 1 && m_Members[0]->getStorage(LOC_INVENTORY)->GetFreeSlotsCount() != 0) ||
         m_PoolItems[SlotID].Lotters.size() == memberCount())
     {
@@ -518,7 +517,8 @@ void CTreasurePool::checkTreasureItem(timer::time_point tick, uint8 SlotID)
             if (highestInfo.member->getStorage(LOC_INVENTORY)->GetFreeSlotsCount() != 0)
             {
                 // add item as they have room!
-                if (charutils::AddItem(highestInfo.member, LOC_INVENTORY, m_PoolItems[SlotID].ID, 1, true) != ERROR_SLOTID)
+                auto transaction = ItemClaimTransaction::start(highestInfo.member);
+                if (transaction && transaction->give(LOC_INVENTORY, m_PoolItems[SlotID].ID, 1, Silence::Yes) && transaction->commit())
                 {
                     treasureWon(highestInfo.member, SlotID);
                 }
@@ -558,7 +558,9 @@ void CTreasurePool::checkTreasureItem(timer::time_point tick, uint8 SlotID)
             {
                 // select random member from this pool to give item to
                 CCharEntity* PChar = candidates.at(xirand::GetRandomNumber(candidates.size()));
-                if (charutils::AddItem(PChar, LOC_INVENTORY, m_PoolItems[SlotID].ID, 1, true) != ERROR_SLOTID)
+
+                auto transaction = ItemClaimTransaction::start(PChar);
+                if (transaction && transaction->give(LOC_INVENTORY, m_PoolItems[SlotID].ID, 1, Silence::Yes) && transaction->commit())
                 {
                     treasureWon(PChar, SlotID);
                 }
@@ -579,7 +581,7 @@ void CTreasurePool::treasureWon(CCharEntity* winner, uint8 SlotID)
         return;
     }
 
-    m_PoolItems[SlotID].TimeStamp = timer::start_time;
+    m_PoolItems[SlotID].TimeStamp = std::nullopt;
 
     for (const auto& member : m_Members)
     {
@@ -599,7 +601,7 @@ void CTreasurePool::treasureError(CCharEntity* winner, uint8 SlotID)
         return;
     }
 
-    m_PoolItems[SlotID].TimeStamp = timer::start_time;
+    m_PoolItems[SlotID].TimeStamp = std::nullopt;
 
     for (const auto& member : m_Members)
     {
@@ -619,7 +621,7 @@ void CTreasurePool::treasureLost(uint8 SlotID)
         return;
     }
 
-    m_PoolItems[SlotID].TimeStamp = timer::start_time;
+    m_PoolItems[SlotID].TimeStamp = std::nullopt;
 
     for (const auto& member : m_Members)
     {

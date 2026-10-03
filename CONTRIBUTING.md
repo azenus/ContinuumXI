@@ -23,13 +23,15 @@
 
 ## General Guidelines
 
-- By contributing to LandSandBoat, either through issues, pull requests, or discussions, you are expected to abide by the rules laid out here in this Contributing Guide.
+- By contributing to LandSandBoat, either through issues or pull requests, you are expected to abide by the rules laid out here in this Contributing Guide.
 - We do not support out-of-date clients or client modification.
 - We do not support piracy of any kind. We encourage you to maintain an active retail subscription and support the game.
 
 ## Technical Guidelines
 
 - For more specific guides on how to contribute using Git, GitHub, C++, Lua, SQL, Python, other technical changes, and how to style your code, etc. please see the [Development Guide](https://github.com/LandSandBoat/server/wiki/Development-Guide) and [Development Landing Page](https://github.com/LandSandBoat/server/wiki/Development) as well as other pages in the [Wiki](https://github.com/LandSandBoat/server/wiki).
+- If you use an AI coding agent, or if you are one, read [AI Agents](docs/ai_agents/README.md) first. It sets out what we expect from AI-assisted contributions.
+- The wiki is written in [docs/wiki](docs/wiki/README.md). Edit the pages there and open a pull request; merging to `base` publishes them.
 
 ## Workflow Guide
 

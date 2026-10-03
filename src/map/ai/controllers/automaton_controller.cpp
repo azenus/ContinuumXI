@@ -87,57 +87,38 @@ void CAutomatonController::setCooldowns()
     }
 }
 
-// New retail Automaton magic AI (Needs more information to accurately recreate)
+// Automaton magic cooldowns, looked up once on automaton creation and stored as variables.
 void CAutomatonController::setMagicCooldowns()
 {
-    switch (PAutomaton->head())
+    const auto maybeCooldowns = lua["xi"]["pets"]["automaton"]["magicCooldowns"].get<sol::optional<sol::table>>();
+    if (!maybeCooldowns)
     {
-        case AutomatonHead::Harlequin:
-        {
-            m_magicCooldown    = 10s;
-            m_enfeebleCooldown = 12s;
-            m_healCooldown     = 12s;
-        }
-        break;
-        case AutomatonHead::Valoredge:
-        {
-            m_magicCooldown = 10s;
-            m_healCooldown  = 20s;
-        }
-        break;
-        case AutomatonHead::Sharpshot:
-        {
-            m_magicCooldown    = 10s;
-            m_enfeebleCooldown = 12s;
-            m_healCooldown     = 20s;
-        }
-        break;
-        case AutomatonHead::Stormwaker:
-        {
-            m_magicCooldown     = 8s;
-            m_enfeebleCooldown  = 10s;
-            m_healCooldown      = 20s;
-            m_elementalCooldown = 25s;
-            m_enhanceCooldown   = 25s;
-        }
-        break;
-        case AutomatonHead::Soulsoother:
-        {
-            m_magicCooldown    = 8s;
-            m_enfeebleCooldown = 10s;
-            m_healCooldown     = 10s;
-            m_statusCooldown   = 10s;
-            m_enhanceCooldown  = 25s;
-        }
-        break;
-        case AutomatonHead::Spiritreaver:
-        {
-            m_magicCooldown     = 8s;
-            m_enfeebleCooldown  = 10s;
-            m_elementalCooldown = 30s;
-            m_enhanceCooldown   = 35s;
-        }
+        ShowError("CAutomatonController::setMagicCooldowns() - Missing xi.pets.automaton.magicCooldowns");
+        return;
     }
+
+    const auto head = static_cast<uint8>(PAutomaton->head());
+
+    const auto maybeHeadCooldowns = (*maybeCooldowns)[head].get<sol::optional<sol::table>>();
+    if (!maybeHeadCooldowns)
+    {
+        ShowErrorFmt("CAutomatonController::setMagicCooldowns() - Missing magic cooldowns for head {}", static_cast<uint16>(head));
+        return;
+    }
+
+    const auto& headCooldowns = *maybeHeadCooldowns;
+
+    const auto categoryCooldown = [&headCooldowns](const char* key) -> timer::duration
+    {
+        return std::chrono::seconds(headCooldowns[key].get<sol::optional<int32>>().value_or(0));
+    };
+
+    m_magicCooldown     = categoryCooldown("global");
+    m_healCooldown      = categoryCooldown("healing");
+    m_enfeebleCooldown  = categoryCooldown("enfeebling");
+    m_elementalCooldown = categoryCooldown("elemental");
+    m_enhanceCooldown   = categoryCooldown("enhancing");
+    m_statusCooldown    = categoryCooldown("statusRemoval");
 }
 
 // Determines standback behavior for the Automaton.
@@ -806,7 +787,7 @@ auto CAutomatonController::TryEnfeeble(const CurrentManeuvers& maneuvers) -> boo
             {
                 castPriority.emplace_back(SpellID::Dispel);
             }
-            break;
+            [[fallthrough]];
         }
         default:
         {
@@ -1571,7 +1552,7 @@ auto CAutomatonController::TryTPMove() -> bool
         for (auto skillid : FrameSkills)
         {
             auto* PSkill = battleutils::GetMobSkill(skillid);
-            if (PSkill && PAutomaton->GetSkill(skilltype) > PSkill->getParam() && PSkill->getParam() != -1 &&
+            if (PSkill && PAutomaton->GetSkill(skilltype) >= PSkill->getParam() && PSkill->getParam() != -1 &&
                 distance(PAutomaton->loc.p, PTarget->loc.p) < PSkill->getRadius())
             {
                 validSkills.emplace_back(PSkill);
@@ -1582,25 +1563,55 @@ auto CAutomatonController::TryTPMove() -> bool
         CMobSkill* PWSkill          = nullptr;
         int8       currentManeuvers = -1;
 
+        // Follows most matching maneuvers, then highest skill requirement, then highest skill ID.
+        auto hasSkillPriority = [&](const CMobSkill* PNewSkill, int8 newManeuvers)
+        {
+            if (newManeuvers != currentManeuvers)
+            {
+                return newManeuvers > currentManeuvers;
+            }
+
+            if (PNewSkill->getParam() != currentSkill)
+            {
+                return PNewSkill->getParam() > currentSkill;
+            }
+
+            return PWSkill && PNewSkill->getID() > PWSkill->getID();
+        };
+
         bool attemptChain = (PAutomaton->getMod(xi::Mod::AUTO_TP_EFFICIENCY) != 0);
+
+        const CStatusEffect* PSCEffect = PTarget->StatusEffectContainer->GetStatusEffect(xi::StatusEffect::Skillchain, 0);
+
+        // Skillchain has been started, wait 3 seconds until skillchain window is open before executing weaponskill.
+        if (attemptChain && PSCEffect && PSCEffect->GetStartTime() + 3s >= timer::now())
+        {
+            return false;
+        }
 
         if (attemptChain)
         {
-            const CStatusEffect* PSCEffect = PTarget->StatusEffectContainer->GetStatusEffect(xi::StatusEffect::Skillchain, 0);
-            if (PSCEffect && PSCEffect->GetStartTime() + 3s < timer::now())
+            if (PSCEffect)
             {
                 std::list<SKILLCHAIN_ELEMENT> resonanceProperties;
 
                 if (const uint16 power = PSCEffect->GetPower())
                 {
-                    resonanceProperties.emplace_back(static_cast<SKILLCHAIN_ELEMENT>(power & 0xF));
-                    resonanceProperties.emplace_back(static_cast<SKILLCHAIN_ELEMENT>((power >> 4) & 0xF));
-                    resonanceProperties.emplace_back(static_cast<SKILLCHAIN_ELEMENT>(power >> 8));
+                    if (PSCEffect->GetTier() == 0)
+                    {
+                        resonanceProperties.emplace_back(static_cast<SKILLCHAIN_ELEMENT>(power & 0xF));
+                        resonanceProperties.emplace_back(static_cast<SKILLCHAIN_ELEMENT>((power >> 4) & 0xF));
+                        resonanceProperties.emplace_back(static_cast<SKILLCHAIN_ELEMENT>(power >> 8));
+                    }
+                    else
+                    {
+                        resonanceProperties.emplace_back(static_cast<SKILLCHAIN_ELEMENT>(power));
+                    }
                 }
 
                 for (auto* PSkill : validSkills)
                 {
-                    if (PSkill->getParam() > currentSkill)
+                    if (hasSkillPriority(PSkill, 1))
                     {
                         std::list<SKILLCHAIN_ELEMENT> skillProperties;
                         skillProperties.emplace_back(static_cast<SKILLCHAIN_ELEMENT>(PSkill->getPrimarySkillchain()));
@@ -1622,7 +1633,7 @@ auto CAutomatonController::TryTPMove() -> bool
             for (auto* PSkill : validSkills)
             {
                 int8 maneuvers = luautils::OnAutomatonAbilityCheck(PTarget, PAutomaton, PSkill);
-                if (maneuvers > -1 && (maneuvers > currentManeuvers || (maneuvers == currentManeuvers && PSkill->getParam() > currentSkill)))
+                if (maneuvers > -1 && hasSkillPriority(PSkill, maneuvers))
                 {
                     currentManeuvers = maneuvers;
                     currentSkill     = PSkill->getParam();

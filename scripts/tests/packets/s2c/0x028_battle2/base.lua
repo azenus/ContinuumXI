@@ -128,9 +128,13 @@ describe('BATTLE2', function()
                 zone  = xi.zone.QUFIM_ISLAND,
             })
 
+        -- The Clipper spawns at level 28 or 29, so its stats, and the packet values below,
+        -- depend on the shared RNG stream. Pin the level.
         mob = player.entities:moveTo(17293357)
+        mob:setLevelRange(28, 28)
         mob:respawn()
         mob.assert:isAlive()
+        mob:updateEnmity(player)
     end)
 
     -- Iterate through test suites in deterministic order
