@@ -276,3 +276,7 @@ clang_tidy_summary.md
 /data/schemas/*.schema.json
 !/data/schemas/_*.schema.json
 xi_data_schema
+/docs
+/.claude
+CLAUDE.md
+validate_code.py

@@ -4,3 +4,7 @@
 [submodule "ximeshes"]
     path = ximeshes
     url = https://github.com/InoUno/ximeshes.git
+[submodule "modules/LQS"]
+    path = modules/LQS
+    url = https://github.com/Zenith-XI/LQS.git
+    branch = Prod
